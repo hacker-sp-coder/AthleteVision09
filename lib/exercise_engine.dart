@@ -1,6 +1,7 @@
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import 'pose_utils.dart';
+import 'push_up_form_validator.dart';
 
 enum ExerciseType { verticalJump, pushUp }
 
@@ -22,6 +23,11 @@ abstract class ExerciseEngine {
   void reset();
 
   void processPose(Pose? pose);
+
+  /// Raw image-space Y of an adaptive on-screen reference guide, or null if
+  /// the engine doesn't use one. Overridden by [PushUpEngine] during
+  /// calibration; other engines inherit this harmless default.
+  double? get groundGuideImageY => null;
 }
 
 class VerticalJumpEngine extends ExerciseEngine {
@@ -115,281 +121,286 @@ const String kPushUpSetupInstruction =
     'Turn sideways to the camera, keep your entire body visible, and get '
     'into the starting push-up position.';
 
-/// One side (left or right) of the body's push-up-relevant landmarks,
-/// selected because it's the side facing the camera in a side-on view.
-class _SidePose {
-  const _SidePose({
-    required this.shoulder,
-    required this.elbow,
-    required this.wrist,
-    required this.hip,
-    required this.knee,
-    required this.ankle,
-    required this.otherShoulder,
-  });
-
-  final PoseLandmark shoulder;
-  final PoseLandmark elbow;
-  final PoseLandmark wrist;
-  final PoseLandmark hip;
-  final PoseLandmark knee;
-  final PoseLandmark ankle;
-
-  /// The opposite shoulder, used only to judge how side-on the user is.
-  /// May be missing/unreliable if heavily occluded, hence nullable.
-  final PoseLandmark? otherShoulder;
+enum PushUpCalibrationStage {
+  setup,
+  sideViewValid,
+  fullBodyValid,
+  gettingIntoPosition,
+  topDetected,
+  holdSteady,
+  calibrated,
 }
 
-enum _PushUpPhase { top, descending, bottom, ascending }
-
-/// Counts push-up reps from a side-on view using body (shoulder/hip)
-/// displacement as the primary signal and elbow angle only as a secondary
-/// validation check, so bending the elbows in place without moving the body
-/// does not register as a rep. See individual constants below for the
-/// specific tunable thresholds.
+/// A Continuous Push-up Form Integrity System: calibration establishes an
+/// athlete-specific valid-TOP reference envelope (see
+/// [PushUpFormValidator]/[PushUpReferenceModel]), and every pose after that
+/// is continuously re-validated against it. Rep counting is intentionally
+/// NOT implemented yet - this only builds the calibration + continuous
+/// validation foundation a future rep state machine will be gated by.
 class PushUpEngine extends ExerciseEngine {
-  // --- Calibration ---
-  // Consecutive good frames (correct side-on form, arms extended) required
-  // before the TOP position is locked in and rep tracking begins.
-  static const int kCalibrationFrameCount = 12;
-  // Max ratio of on-screen shoulder-to-shoulder width to shoulder-to-hip
-  // (torso) length allowed to count the user as "sufficiently side-on" -
-  // in a true side view the shoulders should nearly overlap on screen.
-  static const double kMaxSideOnShoulderRatio = 0.55;
-  // Minimum shoulder-hip-ankle angle (degrees; 180 = perfectly straight)
-  // to count the body as "reasonably straight", not a mathematically
-  // perfect plank.
-  static const double kMinBodyAlignmentAngle = 150;
-  // Likelihood floor used only for the (possibly partially occluded) far
-  // shoulder when judging side-on-ness - deliberately looser than the
-  // strict per-landmark visibility threshold used everywhere else.
-  static const double kMinPositionLikelihood = 0.3;
-
-  // --- Movement tracking ---
-  // EMA smoothing factor applied to the shoulder/hip midpoint Y position to
-  // reduce ML Kit jitter before it's used for phase transitions.
   static const double kEmaAlpha = 0.4;
-  // Downward displacement of the smoothed shoulder/hip midpoint, as a
-  // fraction of the calibrated torso (shoulder-hip) length, required to
-  // count as having reached the bottom region.
-  static const double kDownDisplacementThreshold = 0.35;
-  // Displacement (same units) the body must return within to count as back
-  // at the top. Kept well below kDownDisplacementThreshold so the gap
-  // between the two forms a hysteresis band that resists jitter.
-  static const double kTopDisplacementThreshold = 0.12;
+  static const Duration kStabilityWindow = Duration(milliseconds: 1500);
 
-  // --- Elbow angle: secondary validation only, never the primary signal ---
-  static const double kBottomElbowAngleMax = 130;
-  static const double kTopElbowAngleMin = 150;
+  // Consecutive frames required before a *displayed* calibration stage
+  // change commits, separate from the stability window above - avoids
+  // flicker right at the landmark-likelihood boundary. The final
+  // topDetected/holdSteady/calibrated transitions bypass this since the
+  // stability window already debounces them robustly.
+  static const int kStageDebounceFrames = 3;
 
-  // --- Debounce ---
-  static const Duration kMinRepInterval = Duration(milliseconds: 600);
+  // sideOnRatio is null whenever the far shoulder is momentarily occluded -
+  // which is the *common* case in good side-on form, not an edge case. Hold
+  // the last known-good value through a short run of null frames rather
+  // than treating every occlusion blip as "not side-on".
+  static const int kSideOnHoldFrames = 5;
 
-  bool _calibrated = false;
-  int _calibrationStreak = 0;
-  final List<double> _calibrationBodyY = [];
-  final List<double> _calibrationScale = [];
+  // Asymmetric on purpose: "false positives worse than false negatives"
+  // means lean slower to confirm VALID, quicker to flag a problem.
+  static const int kValidDebounceFrames = 3;
+  static const int kInvalidDebounceFrames = 2;
 
-  double? _topBodyY;
-  double? _bodyScalePx;
-  double? _smoothedBodyY;
+  bool? _preferredSideIsLeft;
 
-  _PushUpPhase _phase = _PushUpPhase.top;
-  int _repCount = 0;
-  DateTime? _lastRepTime;
+  double? _heldSideOnRatio;
+  int _sideOnNullStreak = 0;
+
+  PushUpPoseMetrics? _smoothed;
+
+  PushUpCalibrationStage _stage = PushUpCalibrationStage.setup;
+  PushUpCalibrationStage? _pendingStage;
+  int _pendingStageStreak = 0;
+  String _calibrationMessage = kPushUpSetupInstruction;
+
+  DateTime? _stableSince;
+  final List<PushUpPoseMetrics> _stabilitySamples = [];
+  PushUpReferenceModel? _reference;
 
   bool _isBodyVisible = false;
-  bool _formOk = false;
-  double? _lastElbowAngle;
+  double? _groundGuideImageY;
+
+  FormStatus _formStatus = FormStatus.uncertain;
+  String _formReason = '';
+  int _consecutiveValid = 0;
+  int _consecutiveInvalid = 0;
+
+  bool get _calibrated => _stage == PushUpCalibrationStage.calibrated;
 
   @override
   void reset() {
-    _calibrated = false;
-    _calibrationStreak = 0;
-    _calibrationBodyY.clear();
-    _calibrationScale.clear();
-    _topBodyY = null;
-    _bodyScalePx = null;
-    _smoothedBodyY = null;
-    _phase = _PushUpPhase.top;
-    _repCount = 0;
-    _lastRepTime = null;
+    _preferredSideIsLeft = null;
+    _heldSideOnRatio = null;
+    _sideOnNullStreak = 0;
+    _smoothed = null;
+    _stage = PushUpCalibrationStage.setup;
+    _pendingStage = null;
+    _pendingStageStreak = 0;
+    _calibrationMessage = kPushUpSetupInstruction;
+    _stableSince = null;
+    _stabilitySamples.clear();
+    _reference = null;
     _isBodyVisible = false;
-    _formOk = false;
-    _lastElbowAngle = null;
+    _groundGuideImageY = null;
+    _formStatus = FormStatus.uncertain;
+    _formReason = '';
+    _consecutiveValid = 0;
+    _consecutiveInvalid = 0;
   }
 
-  _SidePose? _extractSide(Pose pose, bool left) {
-    final shoulder = pose.landmarks[
-        left ? PoseLandmarkType.leftShoulder : PoseLandmarkType.rightShoulder];
-    final elbow = pose.landmarks[
-        left ? PoseLandmarkType.leftElbow : PoseLandmarkType.rightElbow];
-    final wrist = pose.landmarks[
-        left ? PoseLandmarkType.leftWrist : PoseLandmarkType.rightWrist];
-    final hip =
-        pose.landmarks[left ? PoseLandmarkType.leftHip : PoseLandmarkType.rightHip];
-    final knee = pose
-        .landmarks[left ? PoseLandmarkType.leftKnee : PoseLandmarkType.rightKnee];
-    final ankle = pose.landmarks[
-        left ? PoseLandmarkType.leftAnkle : PoseLandmarkType.rightAnkle];
-    final otherShoulder = pose.landmarks[
-        left ? PoseLandmarkType.rightShoulder : PoseLandmarkType.leftShoulder];
+  @override
+  double? get groundGuideImageY => _calibrated ? null : _groundGuideImageY;
 
-    if (!isLandmarkVisible(shoulder) ||
-        !isLandmarkVisible(elbow) ||
-        !isLandmarkVisible(wrist) ||
-        !isLandmarkVisible(hip) ||
-        !isLandmarkVisible(knee) ||
-        !isLandmarkVisible(ankle)) {
+  /// Holds the last known-good smoothed sideOnRatio through short null
+  /// streaks (occluded far shoulder), only actually going null after a
+  /// sustained streak.
+  double? _updateSideOnRatio(double? raw) {
+    if (raw != null) {
+      _sideOnNullStreak = 0;
+      _heldSideOnRatio = _heldSideOnRatio == null
+          ? raw
+          : kEmaAlpha * raw + (1 - kEmaAlpha) * _heldSideOnRatio!;
+      return _heldSideOnRatio;
+    }
+    _sideOnNullStreak++;
+    if (_sideOnNullStreak > kSideOnHoldFrames) {
+      _heldSideOnRatio = null;
       return null;
     }
-
-    return _SidePose(
-      shoulder: shoulder!,
-      elbow: elbow!,
-      wrist: wrist!,
-      hip: hip!,
-      knee: knee!,
-      ankle: ankle!,
-      otherShoulder: otherShoulder,
-    );
+    return _heldSideOnRatio;
   }
 
-  /// Picks whichever side (left/right) has all six required landmarks
-  /// confidently visible - the side facing the camera in a side-on stance.
-  /// If both sides qualify, picks the more confident one.
-  _SidePose? _selectSide(Pose pose) {
-    final left = _extractSide(pose, true);
-    final right = _extractSide(pose, false);
-    if (left != null && right == null) return left;
-    if (right != null && left == null) return right;
-    if (left != null && right != null) {
-      final leftScore = left.shoulder.likelihood + left.hip.likelihood;
-      final rightScore = right.shoulder.likelihood + right.hip.likelihood;
-      return leftScore >= rightScore ? left : right;
+  /// Smooths raw metrics (EMA on numeric fields + held sideOnRatio) and
+  /// updates side-selection stickiness. Shared by calibration and tracking.
+  PushUpPoseMetrics _smoothMetrics(PushUpPoseMetrics rawMetrics) {
+    _preferredSideIsLeft = rawMetrics.isLeftSide;
+    _groundGuideImageY = rawMetrics.groundGuideImageY;
+    final blended = rawMetrics.smoothedTowards(_smoothed, kEmaAlpha);
+    final heldSideOn = _updateSideOnRatio(rawMetrics.sideOnRatio);
+    _smoothed = blended.withSideOnRatio(heldSideOn);
+    return _smoothed!;
+  }
+
+  void _resetStability() {
+    _stableSince = null;
+    _stabilitySamples.clear();
+  }
+
+  void _setStage(PushUpCalibrationStage stage, String message) {
+    _calibrationMessage = message; // updates every frame for responsiveness
+    if (stage == _pendingStage) {
+      _pendingStageStreak++;
+    } else {
+      _pendingStage = stage;
+      _pendingStageStreak = 1;
     }
-    return null;
+    final bypassDebounce = stage == PushUpCalibrationStage.topDetected ||
+        stage == PushUpCalibrationStage.holdSteady ||
+        stage == PushUpCalibrationStage.calibrated;
+    if (bypassDebounce || _pendingStageStreak >= kStageDebounceFrames) {
+      _stage = stage;
+    }
   }
 
-  bool _isSideOn(_SidePose side) {
-    final other = side.otherShoulder;
-    if (other == null || other.likelihood < kMinPositionLikelihood) return false;
-    final shoulderWidth = pixelDistance(side.shoulder, other);
-    final torsoLength = pixelDistance(side.shoulder, side.hip);
-    if (torsoLength <= 0) return false;
-    return (shoulderWidth / torsoLength) <= kMaxSideOnShoulderRatio;
+  void _registerValid(String reason) {
+    _consecutiveInvalid = 0;
+    _consecutiveValid++;
+    if (_consecutiveValid >= kValidDebounceFrames) {
+      _formStatus = FormStatus.valid;
+      _formReason = reason;
+    }
   }
 
-  double _alignmentAngle(_SidePose side) =>
-      angleBetweenPoints(side.shoulder, side.hip, side.ankle);
-
-  double _elbowAngle(_SidePose side) =>
-      angleBetweenPoints(side.shoulder, side.elbow, side.wrist);
+  void _registerNonValid(FormStatus status, String reason) {
+    _consecutiveValid = 0;
+    _consecutiveInvalid++;
+    if (_consecutiveInvalid >= kInvalidDebounceFrames) {
+      _formStatus = status;
+      _formReason = reason;
+    }
+  }
 
   @override
   void processPose(Pose? pose) {
     if (pose == null) {
       _isBodyVisible = false;
+      if (!_calibrated) {
+        _setStage(PushUpCalibrationStage.setup, kPushUpSetupInstruction);
+        _resetStability();
+      } else {
+        _registerNonValid(FormStatus.uncertain, 'Body not detected');
+      }
       return;
     }
 
-    final side = _selectSide(pose);
-    if (side == null) {
-      _isBodyVisible = false;
-      return;
-    }
     _isBodyVisible = true;
 
-    final elbowAngle = _elbowAngle(side);
-    final alignmentAngle = _alignmentAngle(side);
-    final sideOn = _isSideOn(side);
-    final aligned = alignmentAngle >= kMinBodyAlignmentAngle;
-    _formOk = sideOn && aligned;
-    _lastElbowAngle = elbowAngle;
-
-    final bodyY = (side.shoulder.y + side.hip.y) / 2;
-    _smoothedBodyY = _smoothedBodyY == null
-        ? bodyY
-        : kEmaAlpha * bodyY + (1 - kEmaAlpha) * _smoothedBodyY!;
-
     if (!_calibrated) {
-      _runCalibration(side, elbowAngle, sideOn, aligned);
-      return;
-    }
-
-    if (!_formOk) {
-      // Bad-form frames don't advance the state machine (can't fake a rep
-      // by breaking form), but the EMA above still tracked so tracking
-      // resumes smoothly once good form returns.
-      return;
-    }
-
-    final displacementPx = _smoothedBodyY! - _topBodyY!;
-    final displacement = displacementPx / _bodyScalePx!;
-
-    switch (_phase) {
-      case _PushUpPhase.top:
-        if (displacement > kTopDisplacementThreshold) {
-          _phase = _PushUpPhase.descending;
-        }
-      case _PushUpPhase.descending:
-        if (displacement >= kDownDisplacementThreshold &&
-            elbowAngle <= kBottomElbowAngleMax) {
-          _phase = _PushUpPhase.bottom;
-        } else if (displacement <= kTopDisplacementThreshold) {
-          _phase = _PushUpPhase.top; // Didn't reach bottom - aborted, no rep.
-        }
-      case _PushUpPhase.bottom:
-        if (displacement < kDownDisplacementThreshold) {
-          _phase = _PushUpPhase.ascending;
-        }
-      case _PushUpPhase.ascending:
-        if (displacement <= kTopDisplacementThreshold &&
-            elbowAngle >= kTopElbowAngleMin) {
-          final now = DateTime.now();
-          if (_lastRepTime == null || now.difference(_lastRepTime!) >= kMinRepInterval) {
-            _repCount++;
-            _lastRepTime = now;
-          }
-          _phase = _PushUpPhase.top;
-        } else if (displacement >= kDownDisplacementThreshold) {
-          _phase = _PushUpPhase.bottom; // Slipped back down before completing.
-        }
+      _processCalibrationFrame(pose);
+    } else {
+      _processTrackingFrame(pose);
     }
   }
 
-  void _runCalibration(_SidePose side, double elbowAngle, bool sideOn, bool aligned) {
-    final validFrame = sideOn && aligned && elbowAngle >= kTopElbowAngleMin;
-    if (!validFrame) {
-      _calibrationStreak = 0;
-      _calibrationBodyY.clear();
-      _calibrationScale.clear();
+  void _processCalibrationFrame(Pose pose) {
+    final lightRatio = PushUpFormValidator.lightSideOnCheck(pose);
+    if (lightRatio == null) {
+      _setStage(
+        PushUpCalibrationStage.setup,
+        'Move into frame so your upper body is visible',
+      );
+      _resetStability();
+      return;
+    }
+    if (lightRatio > kMaxSideOnShoulderRatio) {
+      _setStage(PushUpCalibrationStage.setup, 'Turn sideways to the camera');
+      _resetStability();
       return;
     }
 
-    _calibrationStreak++;
-    _calibrationBodyY.add(_smoothedBodyY!);
-    _calibrationScale.add(pixelDistance(side.shoulder, side.hip));
+    final rawMetrics =
+        PushUpFormValidator.computeMetrics(pose, preferLeftSide: _preferredSideIsLeft);
+    if (rawMetrics == null) {
+      _setStage(
+        PushUpCalibrationStage.sideViewValid,
+        'Keep your entire body visible: shoulder to ankle',
+      );
+      _resetStability();
+      _smoothed = null;
+      return;
+    }
 
-    if (_calibrationStreak >= kCalibrationFrameCount) {
-      _topBodyY = _calibrationBodyY.reduce((a, b) => a + b) / _calibrationBodyY.length;
-      _bodyScalePx =
-          _calibrationScale.reduce((a, b) => a + b) / _calibrationScale.length;
-      _calibrated = true;
-      _phase = _PushUpPhase.top;
+    final metrics = _smoothMetrics(rawMetrics);
+    final result = PushUpFormValidator.evaluateTopCandidate(metrics);
+
+    if (result.status == FormStatus.valid) {
+      final isFirstFrameOfStreak = _stableSince == null;
+      _stableSince ??= DateTime.now();
+      _stabilitySamples.add(metrics);
+      final elapsed = DateTime.now().difference(_stableSince!);
+
+      if (elapsed >= kStabilityWindow) {
+        _reference = PushUpFormValidator.buildReferenceModel(_stabilitySamples);
+        _setStage(PushUpCalibrationStage.calibrated, 'Starting position locked');
+      } else if (isFirstFrameOfStreak) {
+        _setStage(
+          PushUpCalibrationStage.topDetected,
+          'Valid position detected - hold still...',
+        );
+      } else {
+        final pct = (elapsed.inMilliseconds / kStabilityWindow.inMilliseconds * 100)
+            .clamp(0, 100)
+            .toStringAsFixed(0);
+        _setStage(PushUpCalibrationStage.holdSteady, 'Hold still... $pct%');
+      }
+      return;
+    }
+
+    _resetStability();
+
+    const orientationViolations = {
+      FormViolation.tooUpright,
+      FormViolation.groundReferenceInvalid,
+      FormViolation.notSideOn,
+    };
+    if (orientationViolations.contains(result.violation)) {
+      _setStage(PushUpCalibrationStage.fullBodyValid, result.reason);
+    } else {
+      _setStage(PushUpCalibrationStage.gettingIntoPosition, result.reason);
     }
   }
 
-  String get _phaseLabel {
-    switch (_phase) {
-      case _PushUpPhase.top:
-        return 'TOP';
-      case _PushUpPhase.descending:
-        return 'DOWN';
-      case _PushUpPhase.bottom:
-        return 'BOTTOM';
-      case _PushUpPhase.ascending:
-        return 'UP';
+  void _processTrackingFrame(Pose pose) {
+    final rawMetrics =
+        PushUpFormValidator.computeMetrics(pose, preferLeftSide: _preferredSideIsLeft);
+    if (rawMetrics == null) {
+      _registerNonValid(FormStatus.uncertain, 'Lost tracking - keep your full body in frame');
+      return;
+    }
+
+    final metrics = _smoothMetrics(rawMetrics);
+    final result = PushUpFormValidator.evaluateAgainstReference(metrics, _reference!);
+
+    if (result.status == FormStatus.valid) {
+      _registerValid(result.reason);
+    } else {
+      _registerNonValid(result.status, result.reason);
+    }
+  }
+
+  String get _calibrationStageLabel {
+    switch (_stage) {
+      case PushUpCalibrationStage.setup:
+        return 'Set up';
+      case PushUpCalibrationStage.sideViewValid:
+        return 'Side view OK';
+      case PushUpCalibrationStage.fullBodyValid:
+        return 'Body visible';
+      case PushUpCalibrationStage.gettingIntoPosition:
+        return 'Get into position';
+      case PushUpCalibrationStage.topDetected:
+      case PushUpCalibrationStage.holdSteady:
+        return 'Hold steady';
+      case PushUpCalibrationStage.calibrated:
+        return 'Calibrated';
     }
   }
 
@@ -405,19 +416,15 @@ class PushUpEngine extends ExerciseEngine {
 
     if (!_calibrated) {
       return ExerciseStatus(
-        primaryText:
-            _formOk ? 'Hold the position...' : kPushUpSetupInstruction,
-        secondaryText: 'Calibrating: $_calibrationStreak / $kCalibrationFrameCount',
+        primaryText: _calibrationStageLabel,
+        secondaryText: _calibrationMessage,
         isBodyVisible: true,
       );
     }
 
-    final elbowText = _lastElbowAngle?.toStringAsFixed(0) ?? '--';
     return ExerciseStatus(
-      primaryText: 'Reps: $_repCount',
-      secondaryText: _formOk
-          ? 'Position: $_phaseLabel   •   Elbow: $elbowText°'
-          : 'Adjust position: stay side-on with body straight',
+      primaryText: 'Form: ${_formStatus.name.toUpperCase()}',
+      secondaryText: _formReason.isEmpty ? null : _formReason,
       isBodyVisible: true,
     );
   }

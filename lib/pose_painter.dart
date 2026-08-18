@@ -37,12 +37,17 @@ class PosePainter extends CustomPainter {
     required this.imageSize,
     required this.rotation,
     required this.cameraLensDirection,
+    this.groundGuideImageY,
   });
 
   final Pose pose;
   final Size imageSize;
   final InputImageRotation rotation;
   final CameraLensDirection cameraLensDirection;
+
+  /// Raw image-space Y of an adaptive ground/reference guide (e.g. derived
+  /// from the athlete's own wrist/ankle position), or null to draw none.
+  final double? groundGuideImageY;
 
   double _translateX(double x, Size canvasSize) {
     switch (rotation) {
@@ -116,6 +121,35 @@ class PosePainter extends CustomPainter {
       if (offset == null) continue;
       canvas.drawCircle(offset, 5, dotPaint);
     }
+
+    final guideY = groundGuideImageY;
+    if (guideY != null) {
+      final guidePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = Colors.orangeAccent;
+      final y = _translateY(guideY, size);
+      _drawDashedLine(canvas, Offset(0, y), Offset(size.width, y), guidePaint);
+    }
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset p1, Offset p2, Paint paint) {
+    const dashWidth = 12.0;
+    const gapWidth = 8.0;
+    final totalDx = p2.dx - p1.dx;
+    final totalDy = p2.dy - p1.dy;
+    final totalLength = Offset(totalDx, totalDy).distance;
+    if (totalLength == 0) return;
+    final stepX = totalDx / totalLength;
+    final stepY = totalDy / totalLength;
+    var drawn = 0.0;
+    while (drawn < totalLength) {
+      final segStart = Offset(p1.dx + stepX * drawn, p1.dy + stepY * drawn);
+      final segEndLen = (drawn + dashWidth) < totalLength ? drawn + dashWidth : totalLength;
+      final segEnd = Offset(p1.dx + stepX * segEndLen, p1.dy + stepY * segEndLen);
+      canvas.drawLine(segStart, segEnd, paint);
+      drawn += dashWidth + gapWidth;
+    }
   }
 
   @override
@@ -123,6 +157,7 @@ class PosePainter extends CustomPainter {
     return oldDelegate.pose != pose ||
         oldDelegate.imageSize != imageSize ||
         oldDelegate.rotation != rotation ||
-        oldDelegate.cameraLensDirection != cameraLensDirection;
+        oldDelegate.cameraLensDirection != cameraLensDirection ||
+        oldDelegate.groundGuideImageY != groundGuideImageY;
   }
 }

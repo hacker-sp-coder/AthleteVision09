@@ -267,6 +267,7 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
                     imageSize: _lastImageSize!,
                     rotation: _lastRotation!,
                     cameraLensDirection: _cameras[_cameraIndex].lensDirection,
+                    groundGuideImageY: _engine.groundGuideImageY,
                   ),
                 ),
             ],
