@@ -9,6 +9,7 @@ import 'angle_cycle_engine.dart';
 import 'exercise_config.dart';
 import 'exercise_engine.dart';
 import 'pose_painter.dart';
+import 'vertical_jump_engine.dart';
 
 class LiveTestScreen extends StatefulWidget {
   const LiveTestScreen({
