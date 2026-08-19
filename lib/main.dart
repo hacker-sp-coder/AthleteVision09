@@ -47,6 +47,14 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  void _startSquat(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const LiveTestScreen(exerciseType: ExerciseType.squat),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -72,6 +80,12 @@ class HomeScreen extends StatelessWidget {
                 icon: const Icon(Icons.fitness_center),
                 label: const Text('Push-ups'),
                 onPressed: () => _startPushUp(context),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.accessibility_new),
+                label: const Text('Squats'),
+                onPressed: () => _startSquat(context),
               ),
             ],
           ),

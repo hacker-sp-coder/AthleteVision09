@@ -2,7 +2,7 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 import 'pose_utils.dart';
 
-enum ExerciseType { verticalJump, pushUp }
+enum ExerciseType { verticalJump, pushUp, squat }
 
 class ExerciseStatus {
   const ExerciseStatus({

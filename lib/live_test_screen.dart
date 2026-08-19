@@ -59,9 +59,11 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
   @override
   void initState() {
     super.initState();
-    _engine = widget.exerciseType == ExerciseType.verticalJump
-        ? VerticalJumpEngine(userHeightCm: widget.userHeightCm!)
-        : AngleCycleEngine(config: pushUpExerciseConfig);
+    _engine = switch (widget.exerciseType) {
+      ExerciseType.verticalJump => VerticalJumpEngine(userHeightCm: widget.userHeightCm!),
+      ExerciseType.pushUp => AngleCycleEngine(config: pushUpExerciseConfig),
+      ExerciseType.squat => AngleCycleEngine(config: squatExerciseConfig),
+    };
     _poseDetector = PoseDetector(
       options: PoseDetectorOptions(
         model: PoseDetectionModel.base,
@@ -216,9 +218,11 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
     super.dispose();
   }
 
-  String get _title => widget.exerciseType == ExerciseType.verticalJump
-      ? 'Standing Vertical Jump'
-      : 'Push-ups';
+  String get _title => switch (widget.exerciseType) {
+    ExerciseType.verticalJump => 'Standing Vertical Jump',
+    ExerciseType.pushUp => 'Push-ups',
+    ExerciseType.squat => 'Squats',
+  };
 
   @override
   Widget build(BuildContext context) {

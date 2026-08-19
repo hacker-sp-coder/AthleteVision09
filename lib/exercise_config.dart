@@ -102,3 +102,34 @@ final ExerciseConfig pushUpExerciseConfig = ExerciseConfig(
     ),
   ],
 );
+
+final ExerciseConfig squatExerciseConfig = ExerciseConfig(
+  name: 'Squats',
+  setupInstruction:
+      'Stand sideways to the camera, keep your entire body visible from '
+      'head to feet, feet about shoulder-width apart, arms extended '
+      'naturally forward, and hold a standing position to calibrate.',
+  requiredPoints: const [
+    BodyPoint.shoulder,
+    BodyPoint.hip,
+    BodyPoint.knee,
+    BodyPoint.ankle,
+  ],
+  angleLandmarks: (BodyPoint.hip, BodyPoint.knee, BodyPoint.ankle),
+  topAngleThresholdDeg: 160,
+  bottomAngleThresholdDeg: 100,
+  formChecks: [
+    const RequiredLandmarksCheck(),
+    const SideOrientationCheck(),
+    const TorsoOrientationCheck(
+      from: BodyPoint.shoulder,
+      to: BodyPoint.hip,
+      maxLeanFromVerticalDeg: 45,
+    ),
+    const CalibrationAngleGateCheck(
+      landmarks: (BodyPoint.hip, BodyPoint.knee, BodyPoint.ankle),
+      minDeg: 160,
+      failureReason: 'Stand up straight with knees near-straight to calibrate',
+    ),
+  ],
+);

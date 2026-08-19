@@ -283,6 +283,110 @@ class BodyRigidityCheck extends FormCheck {
   }
 }
 
+/// Torso-lean constraint (shoulder-hip line vs. true vertical). Unlike
+/// [BodyInclinationCheck] (which enforces near-horizontal for a push-up
+/// plank), this rejects only a *clearly abnormal* torso orientation while
+/// allowing the moderate forward lean that's a normal part of a squat.
+/// Fixed threshold, evaluated continuously (calibration and tracking alike)
+/// since excessive lean is unacceptable at any point in the rep.
+class TorsoOrientationCheck extends FormCheck {
+  const TorsoOrientationCheck({
+    this.from = BodyPoint.shoulder,
+    this.to = BodyPoint.hip,
+    this.maxLeanFromVerticalDeg = 45,
+  });
+
+  final BodyPoint from;
+  final BodyPoint to;
+  final double maxLeanFromVerticalDeg;
+
+  @override
+  String get name => 'torso_orientation';
+
+  /// Angle of the [from]->[to] line from true vertical, normalized to
+  /// [0,90]: 0 = perfectly vertical (standing tall), 90 = perfectly
+  /// horizontal (bent fully over).
+  double? _leanFromVerticalDeg(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final a = sided[from];
+    final b = sided[to];
+    if (a == null || b == null) return null;
+    final dx = (b.x - a.x).abs();
+    final dy = (b.y - a.y).abs();
+    if (dx == 0 && dy == 0) return 0;
+    return math.atan2(dx, dy) * 180 / math.pi;
+  }
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    final lean = _leanFromVerticalDeg(context);
+    if (lean == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Torso not visible');
+    }
+    if (lean > maxLeanFromVerticalDeg) {
+      return const FormCheckResult(
+        CheckStatus.invalid,
+        'Keep your torso more upright - avoid folding forward',
+      );
+    }
+    return FormCheckResult.ok;
+  }
+}
+
+/// Gates calibration on the primary movement angle being at/above (or
+/// below) a threshold, so the athlete calibrates from a genuine start
+/// position rather than mid-movement (e.g. already squatting, kneeling, or
+/// sitting). Distinguishes calibration from tracking the same way
+/// [BodyRigidityCheck] and [LegExtensionCheck] do: [FormCheckContext.reference]
+/// is null only during calibration. Once calibrated, this check imposes no
+/// constraint at all - the whole point of the primary angle is to move
+/// through this threshold during the rep, so restricting it post-calibration
+/// would break the exercise it gates.
+class CalibrationAngleGateCheck extends FormCheck {
+  const CalibrationAngleGateCheck({
+    required this.landmarks,
+    required this.failureReason,
+    this.minDeg,
+    this.maxDeg,
+  });
+
+  final (BodyPoint, BodyPoint, BodyPoint) landmarks;
+  final double? minDeg;
+  final double? maxDeg;
+  final String failureReason;
+
+  @override
+  String get name => 'calibration_angle_gate';
+
+  double? _angle(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final (a, b, c) = landmarks;
+    final pa = sided[a];
+    final pb = sided[b];
+    final pc = sided[c];
+    if (pa == null || pb == null || pc == null) return null;
+    return angleBetweenPoints(pa, pb, pc);
+  }
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    // Only gates calibration - once a reference exists, tracking has begun
+    // and this angle is free to move through its full range.
+    if (context.reference != null) return FormCheckResult.ok;
+
+    final angle = _angle(context);
+    if (angle == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Move into frame');
+    }
+    if ((minDeg != null && angle < minDeg!) || (maxDeg != null && angle > maxDeg!)) {
+      return FormCheckResult(CheckStatus.invalid, failureReason);
+    }
+    return FormCheckResult.ok;
+  }
+}
+
 /// Knee-extension check (hip-knee-ankle angle). Catches an athlete dropping
 /// to their knees and leaning forward, which the other checks don't rule
 /// out on their own: that pose can still read as side-on, horizontal, and
