@@ -65,6 +65,16 @@ double? averageAnkleY(Pose pose, {double threshold = kMinLandmarkLikelihood}) {
   return null;
 }
 
+double? leftAnkleY(Pose pose, {double threshold = kMinLandmarkLikelihood}) {
+  final landmark = pose.landmarks[PoseLandmarkType.leftAnkle];
+  return isLandmarkVisible(landmark, threshold: threshold) ? landmark!.y : null;
+}
+
+double? rightAnkleY(Pose pose, {double threshold = kMinLandmarkLikelihood}) {
+  final landmark = pose.landmarks[PoseLandmarkType.rightAnkle];
+  return isLandmarkVisible(landmark, threshold: threshold) ? landmark!.y : null;
+}
+
 double? averageHipY(Pose pose, {double threshold = kMinLandmarkLikelihood}) {
   final left = pose.landmarks[PoseLandmarkType.leftHip];
   final right = pose.landmarks[PoseLandmarkType.rightHip];

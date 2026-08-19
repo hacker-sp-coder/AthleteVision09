@@ -301,6 +301,23 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
             fit: StackFit.expand,
             children: [
               CameraPreview(_controller!),
+              if (_isRunning && _engine.showPositionGuide)
+                Positioned.fill(
+                  child: FractionallySizedBox(
+                    alignment: Alignment.bottomCenter,
+                    widthFactor: 0.64,
+                    heightFactor: 0.8,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white70, width: 2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (_displayPose != null && _lastImageSize != null && _lastRotation != null)
                 CustomPaint(
                   painter: PosePainter(
@@ -309,6 +326,29 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
                     rotation: _lastRotation!,
                     cameraLensDirection: _cameras[_cameraIndex].lensDirection,
                     groundGuideImageY: _engine.groundGuideImageY,
+                  ),
+                ),
+              // TEMPORARY: on-screen diagnostic overlay for physical
+              // testing without a USB-attached console. Remove once no
+              // longer needed.
+              if (_engine.diagnosticText != null)
+                Positioned(
+                  top: 8,
+                  left: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _engine.diagnosticText!,
+                      style: const TextStyle(
+                        color: Colors.greenAccent,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
                   ),
                 ),
             ],
