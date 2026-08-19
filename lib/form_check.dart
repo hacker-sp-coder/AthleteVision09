@@ -447,3 +447,182 @@ class LegExtensionCheck extends FormCheck {
     return FormCheckResult.ok;
   }
 }
+
+/// Captures an athlete-specific bilateral vertical-position baseline (e.g.
+/// standing hip or shoulder height, in image-space Y) during calibration.
+/// Imposes no pass/fail constraint beyond landmark visibility - gating on a
+/// genuine standing posture is already handled by the other checks in the
+/// same config. Exists so an event-triggered [BottomEventValidator] has a
+/// global vertical reference to compare against, distinct from any single
+/// joint angle.
+class VerticalBaselineReferenceCheck extends FormCheck {
+  const VerticalBaselineReferenceCheck({
+    required this.key,
+    required this.sampler,
+    this.checkName = 'vertical_baseline_reference',
+  });
+
+  final String key;
+  final double? Function(Pose pose) sampler;
+  final String checkName;
+
+  @override
+  String get name => checkName;
+
+  @override
+  String? get referenceKey => key;
+
+  @override
+  double? sampleValue(FormCheckContext context) => sampler(context.pose);
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    if (sampler(context.pose) == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Move into frame');
+    }
+    return FormCheckResult.ok;
+  }
+}
+
+/// Captures an athlete-specific body-scale reference (pixel distance
+/// between two landmarks, e.g. hip-to-ankle) during calibration, used to
+/// normalize event-triggered displacement measurements for athlete size and
+/// camera distance instead of relying on fixed pixel/cm thresholds.
+class ScaleReferenceCheck extends FormCheck {
+  const ScaleReferenceCheck({required this.a, required this.b, this.key = 'scaleReferencePx'});
+
+  final BodyPoint a;
+  final BodyPoint b;
+  final String key;
+
+  @override
+  String get name => 'scale_reference';
+
+  @override
+  String? get referenceKey => key;
+
+  double? _distance(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final pa = sided[a];
+    final pb = sided[b];
+    if (pa == null || pb == null) return null;
+    return pixelDistance(pa, pb);
+  }
+
+  @override
+  double? sampleValue(FormCheckContext context) => _distance(context);
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    if (_distance(context) == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Move into frame');
+    }
+    return FormCheckResult.ok;
+  }
+}
+
+/// Small temporal sample of raw (unsmoothed) global-position readings taken
+/// around an `AngleCycleEngine`-detected BOTTOM event, plus the athlete's
+/// calibrated reference. Distinct from [FormCheckContext]: a
+/// [BottomEventValidator] fires once per rep attempt, at the moment a
+/// genuine bottom is reached, rather than every frame.
+class BottomEventContext {
+  const BottomEventContext({
+    required this.reference,
+    required this.hipYSamples,
+    required this.shoulderYSamples,
+  });
+
+  final ExerciseReference reference;
+
+  /// Raw hip-midpoint Y readings from the last few frames leading up to the
+  /// BOTTOM event, used to smooth out single-frame ML Kit jitter.
+  final List<double> hipYSamples;
+
+  /// Raw shoulder-midpoint Y readings over the same trailing window.
+  final List<double> shoulderYSamples;
+}
+
+/// Validates that an `AngleCycleEngine`-detected BOTTOM event represents
+/// genuine whole-body movement rather than a local joint-angle
+/// manipulation. Complements the continuous [FormCheck]s, which never see
+/// this event in isolation - see [ExerciseConfig.bottomEventValidator].
+abstract class BottomEventValidator {
+  const BottomEventValidator();
+
+  FormCheckResult validate(BottomEventContext context);
+}
+
+/// Rejects a BOTTOM event that isn't backed by meaningful downward hip
+/// travel, or where the apparent descent is primarily an upper-body fold
+/// rather than genuine hip/knee movement.
+class HipDisplacementValidator extends BottomEventValidator {
+  const HipDisplacementValidator({
+    this.hipBaselineKey = 'hipBaselineY',
+    this.shoulderBaselineKey = 'shoulderBaselineY',
+    this.scaleReferenceKey = 'scaleReferencePx',
+    this.minNormalizedHipDisplacement = 0.30,
+    this.maxShoulderToHipDisplacementRatio = 2.5,
+  });
+
+  final String hipBaselineKey;
+  final String shoulderBaselineKey;
+  final String scaleReferenceKey;
+
+  /// Minimum downward hip-midpoint displacement at BOTTOM, normalized by
+  /// the athlete's calibrated hip-to-ankle segment length, required to
+  /// accept the rep as genuine whole-body movement rather than a local
+  /// knee/ankle manipulation (e.g. raising one foot while standing).
+  final double minNormalizedHipDisplacement;
+
+  /// How many times larger the shoulder's vertical displacement is allowed
+  /// to be relative to the hip's before the movement is judged to be
+  /// primarily an upper-body fold. Natural forward torso lean legitimately
+  /// makes the shoulder travel further than the hip during a squat, so
+  /// this is a generous multiple, not a 1:1 ratio.
+  final double maxShoulderToHipDisplacementRatio;
+
+  double _average(List<double> samples) => samples.reduce((a, b) => a + b) / samples.length;
+
+  @override
+  FormCheckResult validate(BottomEventContext context) {
+    final hipBaseline = context.reference.get(hipBaselineKey);
+    final shoulderBaseline = context.reference.get(shoulderBaselineKey);
+    final scaleReference = context.reference.get(scaleReferenceKey);
+
+    if (hipBaseline == null ||
+        shoulderBaseline == null ||
+        scaleReference == null ||
+        scaleReference <= 0 ||
+        context.hipYSamples.isEmpty ||
+        context.shoulderYSamples.isEmpty) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Movement reference unavailable');
+    }
+
+    final bottomHipY = _average(context.hipYSamples);
+    final bottomShoulderY = _average(context.shoulderYSamples);
+
+    // Image Y grows downward, so a genuine descent shows up as a positive
+    // difference here.
+    final hipDisplacement = bottomHipY - hipBaseline;
+    final shoulderDisplacement = bottomShoulderY - shoulderBaseline;
+
+    final normalizedHipDisplacement = hipDisplacement / scaleReference;
+    if (normalizedHipDisplacement < minNormalizedHipDisplacement) {
+      return const FormCheckResult(
+        CheckStatus.invalid,
+        'Hips did not move down enough - squat with your whole body, not just your knee',
+      );
+    }
+
+    if (shoulderDisplacement > hipDisplacement * maxShoulderToHipDisplacementRatio) {
+      return const FormCheckResult(
+        CheckStatus.invalid,
+        'Bend at the hips and knees - do not just fold your upper body forward',
+      );
+    }
+
+    return FormCheckResult.ok;
+  }
+}

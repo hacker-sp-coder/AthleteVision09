@@ -27,6 +27,12 @@ class AngleCycleEngine extends ExerciseEngine {
   /// noise. Chosen from the middle of the requested 5-8 degree range.
   static const double _reversalThresholdDeg = 6.0;
 
+  /// Size of the trailing raw-position window sampled for
+  /// [BottomEventValidator]s. Small and fixed - just enough to average out
+  /// single-frame ML Kit jitter around a BOTTOM event, not a smoothing
+  /// state machine.
+  static const int _eventSampleWindow = 5;
+
   bool? _preferredSideIsLeft;
 
   bool _calibrated = false;
@@ -45,6 +51,13 @@ class AngleCycleEngine extends ExerciseEngine {
   /// of the EMA-smoothed angle, which lags too much to reliably catch fast
   /// reps.
   double? _descentMinAngle;
+
+  /// Trailing raw hip/shoulder-midpoint Y readings, refreshed every
+  /// tracking frame regardless of phase, so a [BottomEventValidator] has a
+  /// small jitter-robust window to sample from whenever a BOTTOM event is
+  /// confirmed.
+  final List<double> _hipYWindow = [];
+  final List<double> _shoulderYWindow = [];
 
   int _consecutiveUncertain = 0;
   CheckStatus _formStatus = CheckStatus.uncertain;
@@ -72,6 +85,8 @@ class AngleCycleEngine extends ExerciseEngine {
     _repCount = 0;
     _lastRepTime = null;
     _descentMinAngle = null;
+    _hipYWindow.clear();
+    _shoulderYWindow.clear();
     _consecutiveUncertain = 0;
     _formStatus = CheckStatus.uncertain;
     _formReason = '';
@@ -195,6 +210,11 @@ class AngleCycleEngine extends ExerciseEngine {
     final context = FormCheckContext(pose: pose, sidedPose: sidedPose, reference: _reference);
     final result = _evaluateChecks(context);
 
+    final hipY = averageHipY(pose);
+    if (hipY != null) _pushSample(_hipYWindow, hipY);
+    final shoulderY = averageShoulderY(pose);
+    if (shoulderY != null) _pushSample(_shoulderYWindow, shoulderY);
+
     // Smoothed angle keeps tracking whenever computable, independent of
     // check status, so tracking resumes cleanly once good form returns.
     // This EMA signal is retained purely for form/status purposes and is
@@ -245,6 +265,13 @@ class AngleCycleEngine extends ExerciseEngine {
   void _invalidateTrajectory() {
     _phase = _CyclePhase.top;
     _descentMinAngle = null;
+    _hipYWindow.clear();
+    _shoulderYWindow.clear();
+  }
+
+  void _pushSample(List<double> window, double value) {
+    window.add(value);
+    if (window.length > _eventSampleWindow) window.removeAt(0);
   }
 
   /// Advances the warning/termination lifecycle from the current
@@ -302,7 +329,7 @@ class AngleCycleEngine extends ExerciseEngine {
           // noise. Judge depth from the tracked minimum, not this frame's
           // instantaneous value.
           if (_descentMinAngle! <= config.bottomAngleThresholdDeg) {
-            _phase = _CyclePhase.bottom;
+            _confirmBottom(angle);
           } else {
             // Insufficient depth - don't count a rep. Keep watching for
             // either a real bottom or a full recovery to top from here.
@@ -325,6 +352,54 @@ class AngleCycleEngine extends ExerciseEngine {
         } else if (angle <= config.bottomAngleThresholdDeg) {
           _phase = _CyclePhase.bottom; // Slipped back down before completing.
         }
+    }
+  }
+
+  /// Called when `AngleCycleEngine`'s knee-angle mechanics alone have
+  /// confirmed a genuine BOTTOM (sufficient depth + a real reversal). This
+  /// is the sole hook into [ExerciseConfig.bottomEventValidator]: the knee
+  /// ROM state machine above is untouched, this just gates whether that
+  /// already-detected event is accepted as representing real whole-body
+  /// movement.
+  void _confirmBottom(double angle) {
+    final validator = config.bottomEventValidator;
+    final reference = _reference;
+    if (validator == null || reference == null) {
+      _phase = _CyclePhase.bottom;
+      return;
+    }
+
+    final result = validator.validate(
+      BottomEventContext(
+        reference: reference,
+        hipYSamples: List.unmodifiable(_hipYWindow),
+        shoulderYSamples: List.unmodifiable(_shoulderYWindow),
+      ),
+    );
+
+    switch (result.status) {
+      case CheckStatus.valid:
+        _phase = _CyclePhase.bottom;
+      case CheckStatus.invalid:
+        // A knee angle that reached bottom depth without genuine whole-body
+        // movement is a confirmed anti-cheat violation, not a silently
+        // discarded rep - counting a fake squat is worse than costing a
+        // warning. Registered immediately rather than through the sustained
+        // ~800ms INVALID-frame debounce used for continuous FormChecks:
+        // that debounce exists to filter noisy per-frame signals, but this
+        // one-shot event decision is already smoothed via the temporal
+        // sample window above.
+        _formStatus = CheckStatus.invalid;
+        _formReason = result.reason;
+        _invalidateTrajectory();
+        _violationConfirmedThisEpisode = true;
+        _invalidSince ??= DateTime.now();
+        _registerConfirmedViolation();
+      case CheckStatus.uncertain:
+        // Not enough reliable displacement data yet - treat like an
+        // insufficient-depth reading rather than penalizing the athlete for
+        // a transient landmark dropout.
+        _descentMinAngle = angle;
     }
   }
 

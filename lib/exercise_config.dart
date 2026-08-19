@@ -21,6 +21,7 @@ class ExerciseConfig {
     this.minRepInterval = const Duration(milliseconds: 600),
     this.maxUncertainFrames = 5,
     this.sustainedInvalidConfirmation = const Duration(milliseconds: 800),
+    this.bottomEventValidator,
   });
 
   final String name;
@@ -55,6 +56,12 @@ class ExerciseConfig {
   /// violation. Shorter INVALID blips are treated as noise, not a
   /// violation.
   final Duration sustainedInvalidConfirmation;
+
+  /// Optional event-triggered validator invoked once when `AngleCycleEngine`
+  /// confirms a genuine BOTTOM event, to verify the movement represents
+  /// meaningful whole-body motion rather than a local joint-angle
+  /// manipulation. Null for exercises that don't need it (e.g. push-ups).
+  final BottomEventValidator? bottomEventValidator;
 }
 
 final ExerciseConfig pushUpExerciseConfig = ExerciseConfig(
@@ -131,5 +138,26 @@ final ExerciseConfig squatExerciseConfig = ExerciseConfig(
       minDeg: 160,
       failureReason: 'Stand up straight with knees near-straight to calibrate',
     ),
+    const VerticalBaselineReferenceCheck(
+      key: 'hipBaselineY',
+      checkName: 'hip_baseline_reference',
+      sampler: averageHipY,
+    ),
+    const VerticalBaselineReferenceCheck(
+      key: 'shoulderBaselineY',
+      checkName: 'shoulder_baseline_reference',
+      sampler: averageShoulderY,
+    ),
+    const ScaleReferenceCheck(
+      a: BodyPoint.hip,
+      b: BodyPoint.ankle,
+      key: 'scaleReferencePx',
+    ),
   ],
+  // Global movement invariant on top of the local knee-angle ROM above:
+  // rejects a BOTTOM event that isn't backed by genuine downward hip travel
+  // (e.g. raising one foot while staying essentially standing), or where
+  // the apparent descent is primarily an upper-body fold. See
+  // HipDisplacementValidator for the exact thresholds.
+  bottomEventValidator: const HipDisplacementValidator(),
 );
