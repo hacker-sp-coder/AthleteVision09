@@ -18,6 +18,10 @@ class AngleCycleEngine extends ExerciseEngine {
 
   final ExerciseConfig config;
 
+  /// Confirmed violations tolerated before the attempt is terminated - two
+  /// warnings, then termination on the third.
+  static const int _maxWarnings = 2;
+
   bool? _preferredSideIsLeft;
 
   bool _calibrated = false;
@@ -36,6 +40,14 @@ class AngleCycleEngine extends ExerciseEngine {
   String _formReason = '';
   bool _isBodyVisible = false;
 
+  // Test-attempt lifecycle: separate from FormCheck verdicts above. Tracks
+  // how long a definite INVALID status has persisted, independent of the
+  // frame-by-frame VALID/INVALID/UNCERTAIN judgment itself.
+  DateTime? _invalidSince;
+  bool _violationConfirmedThisEpisode = false;
+  int _warningCount = 0;
+  bool _terminated = false;
+
   @override
   void reset() {
     _preferredSideIsLeft = null;
@@ -52,6 +64,10 @@ class AngleCycleEngine extends ExerciseEngine {
     _formStatus = CheckStatus.uncertain;
     _formReason = '';
     _isBodyVisible = false;
+    _invalidSince = null;
+    _violationConfirmedThisEpisode = false;
+    _warningCount = 0;
+    _terminated = false;
   }
 
   FormCheckResult _evaluateChecks(FormCheckContext context) {
@@ -88,6 +104,10 @@ class AngleCycleEngine extends ExerciseEngine {
 
   @override
   void processPose(Pose? pose) {
+    // Attempt is over: freeze the rep count and ignore everything from here
+    // on. No auto-restart, no further phase advancement.
+    if (_terminated) return;
+
     if (pose == null) {
       _isBodyVisible = false;
       if (!_calibrated) {
@@ -199,12 +219,46 @@ class AngleCycleEngine extends ExerciseEngine {
         _formReason = result.reason;
         _invalidateTrajectory();
     }
+    _updateLifecycle();
   }
 
   /// A fresh valid TOP is required to start a new attempt - whatever
   /// partial descent/ascent progress existed is discarded, no rep counted.
   void _invalidateTrajectory() {
     _phase = _CyclePhase.top;
+  }
+
+  /// Advances the warning/termination lifecycle from the current
+  /// [_formStatus]. A confirmed violation is a definite INVALID status
+  /// that has persisted continuously for at least
+  /// [ExerciseConfig.sustainedInvalidConfirmation] - short blips don't
+  /// count, so isolated noisy frames can't burn a warning. UNCERTAIN
+  /// frames neither confirm nor clear an in-progress violation episode;
+  /// only a return to VALID ends it, allowing a later, separate violation
+  /// to warn again.
+  void _updateLifecycle() {
+    switch (_formStatus) {
+      case CheckStatus.valid:
+        _invalidSince = null;
+        _violationConfirmedThisEpisode = false;
+      case CheckStatus.invalid:
+        final now = DateTime.now();
+        _invalidSince ??= now;
+        if (!_violationConfirmedThisEpisode &&
+            now.difference(_invalidSince!) >= config.sustainedInvalidConfirmation) {
+          _violationConfirmedThisEpisode = true;
+          _registerConfirmedViolation();
+        }
+      case CheckStatus.uncertain:
+        break;
+    }
+  }
+
+  void _registerConfirmedViolation() {
+    _warningCount++;
+    if (_warningCount > _maxWarnings) {
+      _terminated = true;
+    }
   }
 
   void _advancePhase(double angle) {
@@ -252,6 +306,14 @@ class AngleCycleEngine extends ExerciseEngine {
 
   @override
   ExerciseStatus get status {
+    if (_terminated) {
+      return ExerciseStatus(
+        primaryText: 'TEST TERMINATED',
+        secondaryText: 'Final rep count: $_repCount',
+        isBodyVisible: _isBodyVisible,
+      );
+    }
+
     if (!_isBodyVisible) {
       return ExerciseStatus(
         primaryText: config.setupInstruction,
@@ -264,6 +326,17 @@ class AngleCycleEngine extends ExerciseEngine {
       return ExerciseStatus(
         primaryText: 'Calibrating',
         secondaryText: _calibrationMessage,
+        isBodyVisible: true,
+      );
+    }
+
+    if (_violationConfirmedThisEpisode && _warningCount > 0) {
+      final message = _warningCount == 1
+          ? 'FORM WARNING 1/2 — Return to the required push-up position'
+          : 'FORM WARNING 2/2 — One more form violation will end the test';
+      return ExerciseStatus(
+        primaryText: message,
+        secondaryText: 'Reps: $_repCount',
         isBodyVisible: true,
       );
     }

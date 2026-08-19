@@ -20,6 +20,7 @@ class ExerciseConfig {
     this.stabilityWindow = const Duration(milliseconds: 1500),
     this.minRepInterval = const Duration(milliseconds: 600),
     this.maxUncertainFrames = 5,
+    this.sustainedInvalidConfirmation = const Duration(milliseconds: 800),
   });
 
   final String name;
@@ -48,6 +49,12 @@ class ExerciseConfig {
   /// Consecutive UNCERTAIN frames tolerated before escalating to INVALID
   /// and invalidating the current trajectory.
   final int maxUncertainFrames;
+
+  /// How long a definite INVALID form status must persist continuously
+  /// before the test-attempt lifecycle counts it as one confirmed
+  /// violation. Shorter INVALID blips are treated as noise, not a
+  /// violation.
+  final Duration sustainedInvalidConfirmation;
 }
 
 final ExerciseConfig pushUpExerciseConfig = ExerciseConfig(
