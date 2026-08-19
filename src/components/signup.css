@@ -1,0 +1,191 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Pure Pitch Black Background */
+.sih-auth-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #050505;
+  font-family: 'Inter', sans-serif;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+/* Dark Card Container with Subtle Glass Border */
+.sih-card {
+  width: 100%;
+  max-width: 480px;
+  background: #0d0d0d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 36px 32px;
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.8);
+  box-sizing: border-box;
+}
+
+/* Top Small Tracking/Badge */
+.sih-badge {
+  display: inline-block;
+  color: #71717a;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+/* Typography */
+.sih-title {
+  color: #ffffff;
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  letter-spacing: -0.5px;
+}
+
+.sih-subtitle {
+  color: #a1a1aa;
+  font-size: 0.85rem;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+
+/* Form Layout */
+.sih-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  color: #a1a1aa;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Dark Inputs with Subtle Outline */
+.sih-input, select.sih-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #27272a;
+  background: #121214 !important;
+  color: #ffffff !important;
+  font-size: 0.875rem;
+  box-sizing: border-box;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.sih-input:focus, select.sih-input:focus {
+  border-color: #52525b;
+  box-shadow: 0 0 0 1px #52525b;
+}
+
+/* Disabled Field (Age Category) */
+.sih-input:disabled {
+  background: #18181b !important;
+  color: #71717a !important;
+  border-color: #27272a;
+  cursor: not-allowed;
+}
+
+/* Solid High-Contrast Primary Button */
+.sih-btn-primary {
+  width: 100%;
+  padding: 14px;
+  border-radius: 8px;
+  border: none;
+  background: #ffffff;
+  color: #000000;
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: all 0.2s ease;
+}
+
+.sih-btn-primary:hover {
+  background: #e4e4e7;
+  transform: translateY(-1px);
+}
+
+/* Social Login & Divider */
+.sih-divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  color: #52525b;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+}
+
+.sih-divider::before, .sih-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #27272a;
+}
+
+.sih-divider span {
+  padding: 0 12px;
+}
+
+.sih-btn-google {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #27272a;
+  background: #121214;
+  color: #e4e4e7;
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: all 0.2s ease;
+}
+
+.sih-btn-google:hover {
+  background: #18181b;
+  border-color: #3f3f46;
+}
+
+/* Native Calendar & Autofill Dark Override */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.sih-input:-webkit-autofill,
+.sih-input:-webkit-autofill:hover, 
+.sih-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #ffffff;
+  -webkit-box-shadow: 0 0 0px 1000px #121214 inset;
+}
+
+@media (max-width: 576px) {
+  .sih-auth-wrapper { padding: 12px; }
+  .sih-card { padding: 28px 20px; }
+  .form-grid-2 { grid-template-columns: 1fr; }
+}
