@@ -86,5 +86,12 @@ final ExerciseConfig pushUpExerciseConfig = ExerciseConfig(
       absoluteMinDeg: 155,
       toleranceDeg: 18,
     ),
+    const LegExtensionCheck(
+      a: BodyPoint.hip,
+      b: BodyPoint.knee,
+      c: BodyPoint.ankle,
+      absoluteMinDeg: 150,
+      toleranceDeg: 20,
+    ),
   ],
 );

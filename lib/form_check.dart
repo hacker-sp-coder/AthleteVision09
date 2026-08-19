@@ -282,3 +282,64 @@ class BodyRigidityCheck extends FormCheck {
     return FormCheckResult.ok;
   }
 }
+
+/// Knee-extension check (hip-knee-ankle angle). Catches an athlete dropping
+/// to their knees and leaning forward, which the other checks don't rule
+/// out on their own: that pose can still read as side-on, horizontal, and
+/// have a straight shoulder-hip-ankle line. Same absolute-floor +
+/// reference-tolerance pattern as [BodyRigidityCheck].
+class LegExtensionCheck extends FormCheck {
+  const LegExtensionCheck({
+    this.a = BodyPoint.hip,
+    this.b = BodyPoint.knee,
+    this.c = BodyPoint.ankle,
+    this.absoluteMinDeg = 150,
+    this.toleranceDeg = 20,
+  });
+
+  final BodyPoint a;
+  final BodyPoint b;
+  final BodyPoint c;
+  final double absoluteMinDeg;
+  final double toleranceDeg;
+
+  @override
+  String get name => 'leg_extension';
+
+  @override
+  String? get referenceKey => 'legExtensionAngleDeg';
+
+  double? _angle(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final pa = sided[a];
+    final pb = sided[b];
+    final pc = sided[c];
+    if (pa == null || pb == null || pc == null) return null;
+    return angleBetweenPoints(pa, pb, pc);
+  }
+
+  @override
+  double? sampleValue(FormCheckContext context) => _angle(context);
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    final angle = _angle(context);
+    if (angle == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Legs not visible');
+    }
+
+    final reference = context.reference?.get(referenceKey!);
+    final broken = reference != null
+        ? (angle - reference).abs() > toleranceDeg
+        : angle < absoluteMinDeg;
+
+    if (broken) {
+      return const FormCheckResult(
+        CheckStatus.invalid,
+        'Keep your legs straight - do not drop to your knees',
+      );
+    }
+    return FormCheckResult.ok;
+  }
+}
