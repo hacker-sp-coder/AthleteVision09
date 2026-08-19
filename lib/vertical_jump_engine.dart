@@ -3,22 +3,16 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'exercise_engine.dart';
 import 'pose_utils.dart';
 
-/// Why a jump attempt was rejected. Kept deliberately small - just enough to
-/// distinguish the failure modes the protocol actually cares about.
+/// Why a confirmed jump (a genuine airborne -> landing event) was rejected.
+/// Deliberately small - only the failure modes actually reachable once an
+/// attempt requires real airborne evidence to exist at all.
 enum JumpInvalidReason {
-  /// A qualifying whole-body movement started (e.g. a countermovement dip)
-  /// but no genuine airborne phase ever followed it.
-  notAJump,
-
   /// Horizontal hip displacement from the calibrated baseline exceeded
-  /// tolerance at some point during the attempt.
+  /// tolerance during the confirmed airborne window.
   excessiveDrift,
 
-  /// A second liftoff was detected before the first landing was confirmed.
-  multipleJump,
-
-  /// Tracking was lost (landmarks not visible, or no reliable apex/landing
-  /// signal) for too long during the attempt.
+  /// Landmark visibility was lost, or landing evidence never arrived,
+  /// during a confirmed airborne event.
   insufficientData,
 }
 
@@ -36,26 +30,46 @@ class JumpAttemptResult {
   final double? heightCm;
 }
 
-enum _JumpState { calibrating, awaitingBaseline, armed, airborne, falling, testComplete }
+enum _JumpState { calibrating, ready, airborne, awaitingBaseline, testComplete }
 
 /// Standing vertical jump test: three maximum-effort attempts, scored on the
 /// best valid jump height.
 ///
-/// Self-contained by design - owns calibration stability, takeoff/airborne/
-/// apex/landing detection, attempt validity, and best-of-3 scoring directly,
-/// rather than sitting on top of the angle-cycle rep-counting mechanics used
-/// by push-ups/squats (which don't fit a single-attempt ballistic movement).
+/// Architecture: there is no real-time "attempt started" event. The engine
+/// continuously observes the athlete while [_JumpState.ready], and an
+/// attempt only comes into existence retrospectively, once a genuine
+/// AIRBORNE -> LANDING event has been confirmed. Standing still, swaying,
+/// walking closer/further from the camera, or squatting down and back up
+/// without leaving the ground all leave the engine in [_JumpState.ready]
+/// forever - nothing is consumed. This replaces an earlier design that used
+/// static image-space geometry (distance from the calibrated baseline) to
+/// decide whether a movement attempt had started, which broke under camera
+/// distance/perspective changes: monocular 2D geometry can't reliably
+/// answer a temporal question ("has a jump begun?"), only a genuine
+/// airborne event can.
 ///
-/// Primary measurement is vertical displacement of the hip midpoint between
-/// the calibrated standing baseline and the apex reached during a validated
-/// airborne phase. The ankle/foot baseline - not the hip - is the evidence
-/// used to decide whether an airborne phase happened at all, so a deep knee
-/// bend (hips moving without ever leaving the ground) can't be scored as a
-/// jump.
+/// Airborne/landing detection is temporal, not a single-frame threshold:
+/// the ankle/foot vertical position relative to the calibrated ground
+/// baseline (with hip rise as supporting corroboration - never sufficient
+/// on its own) must hold continuously for a short debounce window before
+/// either event is confirmed, so isolated ML Kit jitter can't fabricate an
+/// airborne event or a landing. All of this uses raw per-frame landmark
+/// positions, never an EMA - smoothing lags too much for a fast transition.
 ///
-/// All movement-event detection (takeoff, apex, landing) uses raw per-frame
-/// landmark positions, never an EMA - smoothing lags too much to catch a
-/// fast takeoff/apex transition reliably.
+/// The jump apex is never chased causally. Once a landing is confirmed, the
+/// engine looks back through the raw hip-Y samples collected during the
+/// confirmed airborne window and takes their minimum - that retrospective
+/// minimum is the apex. Jump height is the calibrated-scale conversion of
+/// (standing hip baseline - apex), which is the only height measurement in
+/// this iteration: flight-time-based height was considered but the current
+/// camera/ML Kit pipeline exposes no capture timestamp for a Pose frame
+/// (only wall-clock processing time, skewed by frame-skip and inference
+/// latency), so it was deferred rather than built on an unreliable clock.
+///
+/// Horizontal drift is a validity check on an already-confirmed jump, never
+/// a trigger: it's measured only across the confirmed airborne window and
+/// can mark that attempt invalid, but never prevents the attempt from
+/// existing or being counted.
 class VerticalJumpEngine extends ExerciseEngine {
   VerticalJumpEngine({required this.userHeightCm});
 
@@ -68,80 +82,75 @@ class VerticalJumpEngine extends ExerciseEngine {
       'body visible from head to feet. Hold still to calibrate, then '
       'perform up to $kMaxAttempts maximum-effort vertical jumps, one at a '
       'time. No running or stepping approach - jump straight up from a '
-      'standing position.';
+      'standing position and stay roughly in place.';
 
   /// How long a standing position must hold, both for the initial
-  /// calibration and when re-confirming standing baseline between attempts.
+  /// calibration and when re-confirming standing baseline after an attempt.
   static const Duration _kStabilityWindow = Duration(milliseconds: 1300);
 
-  /// Small temporal tolerance so a single noisy frame near the ground
-  /// baseline doesn't finalize a landing prematurely.
+  /// How long the airborne evidence (ankle + supporting hip rise) must hold
+  /// continuously before a takeoff is confirmed - the temporal debounce
+  /// that keeps a single noisy frame from fabricating an airborne event.
+  static const Duration _kAirborneConfirmationDuration = Duration(milliseconds: 150);
+
+  /// How long the ankle must stay back near the ground baseline before a
+  /// landing is confirmed - so a single noisy near-baseline frame mid-flight
+  /// doesn't end the attempt early.
   static const Duration _kLandingDebounce = Duration(milliseconds: 180);
 
-  /// Safety net for an armed attempt that starts a qualifying movement but
-  /// never resolves into either a takeoff or a return to standing.
-  static const Duration _kAttemptTimeout = Duration(seconds: 5);
+  /// Safety net from a confirmed takeoff: real human airborne time plus
+  /// landing debounce is well under this, so exceeding it means tracking
+  /// was lost during a genuine, already-confirmed jump.
+  static const Duration _kMaxAirborneDuration = Duration(milliseconds: 2500);
 
-  /// Safety net from takeoff: real human airborne time is well under this,
-  /// so exceeding it without a confirmed apex means tracking was lost.
-  static const Duration _kMaxAirborneToApexDuration = Duration(milliseconds: 1200);
-
-  /// Safety net from apex: if landing evidence never arrives, tracking was
-  /// lost during descent.
-  static const Duration _kMaxFallingToLandingDuration = Duration(milliseconds: 2500);
-
-  /// Consecutive not-fully-visible frames tolerated during a live attempt
-  /// before it's abandoned as insufficient data.
+  /// Consecutive not-fully-visible frames tolerated during a confirmed
+  /// airborne window before the attempt is abandoned as insufficient data.
   static const int _kMaxConsecutiveNotVisibleFrames = 10;
 
-  // All of the fractions below are normalized by the athlete's own
-  // calibrated body scale (standing hip-to-ankle vertical pixel span), so
-  // they hold regardless of camera distance or athlete height. Starting
-  // values are conservative estimates pending physical tuning.
+  // The fractions below are normalized by the athlete's own calibrated body
+  // scale (standing hip-to-ankle vertical pixel span), so they hold
+  // regardless of camera distance or athlete height. Starting values are
+  // conservative estimates pending physical tuning.
 
-  /// Minimum deviation of the hip-to-ankle vertical span from its
-  /// calibrated standing value, as a fraction of body scale, that counts as
-  /// "a genuine movement attempt started" (as opposed to idle standing sway
-  /// or repositioning). The span - not raw distance from the baseline - is
-  /// the signal: a countermovement dip or upward drive is knee/hip flexion,
-  /// which changes the span; stepping back, swaying, or drifting off the
-  /// calibrated baseline moves the hip and ankle landmarks together and
-  /// leaves the span essentially unchanged. This keeps the dotted baseline
-  /// a measurement reference only, never an attempt-start trigger.
-  /// Deliberately smaller than the takeoff thresholds below so it fires on
-  /// the countermovement dip before liftoff.
-  static const double _kQualifyingMovementFraction = 0.05;
+  /// Ankle rise above its calibrated ground baseline, as a fraction of body
+  /// scale, required as airborne evidence - the primary signal, since the
+  /// ankle leaving the ground is what actually distinguishes a jump from a
+  /// deep knee bend.
+  static const double _kAnkleAirborneRiseFraction = 0.04;
 
-  /// Hip rise above baseline, as a fraction of body scale, required as one
-  /// of the two takeoff conditions.
-  static const double _kHipTakeoffRiseFraction = 0.06;
-
-  /// Ankle rise above baseline, as a fraction of body scale, required as
-  /// the other takeoff condition - the primary evidence of leaving the
-  /// ground, independent of hip height.
-  static const double _kAnkleTakeoffRiseFraction = 0.04;
-
-  /// How far the hip must rise back up from its tracked in-flight minimum
-  /// to confirm that minimum was a genuine apex (reversal), not noise.
-  static const double _kApexReversalFraction = 0.02;
+  /// Hip rise above baseline, as a fraction of body scale, required as
+  /// supporting evidence alongside the ankle signal. Never sufficient by
+  /// itself - hip movement alone must never confirm a jump.
+  static const double _kHipAirborneRiseFraction = 0.06;
 
   /// How close the ankle must return to the standing baseline to count as
-  /// having landed.
+  /// landed.
   static const double _kAnkleLandingToleranceFraction = 0.04;
 
   /// How close hip/ankle must be to the known baseline, held continuously
-  /// for [_kStabilityWindow], to re-arm the next attempt.
-  static const double _kRearmToleranceFraction = 0.06;
+  /// for [_kStabilityWindow], to re-arm the next attempt after a confirmed
+  /// jump. Deliberately looser than a calibration-grade tolerance: this is
+  /// checked against the athlete's original pre-jump calibration position,
+  /// and a real landing naturally settles a bit off that exact spot (a
+  /// small balance step, a slightly different stance width, minor
+  /// forward/backward lean) without the athlete having moved out of
+  /// position in any meaningful sense. Doubled from an initial 0.06 to 0.12
+  /// - generous enough to absorb that normal post-landing settling on both
+  /// hip and ankle, while still requiring the athlete back within roughly
+  /// an eighth of their own calibrated hip-to-ankle span, nowhere close to
+  /// "anywhere in frame."
+  static const double _kRearmToleranceFraction = 0.12;
 
-  /// Maximum horizontal hip drift from the calibrated baseline tolerated
-  /// during an attempt before it's flagged as not a primarily-vertical
-  /// jump. A validity gate, not a perspective correction.
+  /// Maximum horizontal hip drift from the calibrated baseline, measured
+  /// only across a confirmed airborne window, tolerated before that jump is
+  /// flagged invalid. A validity gate, not a perspective correction.
   static const double _kHorizontalDriftToleranceFraction = 0.25;
 
   _JumpState _state = _JumpState.calibrating;
   bool _isBodyVisible = false;
 
-  // Calibration.
+  // Calibration - a one-time reference snapshot. Never repeated or used as
+  // an ongoing "is the athlete still standing like this" validator.
   DateTime? _stableSince;
   final List<double> _calHipY = [];
   final List<double> _calAnkleY = [];
@@ -152,33 +161,26 @@ class VerticalJumpEngine extends ExerciseEngine {
   double? _baselineAnkleY;
   double? _baselineHipX;
 
-  /// Calibrated standing hip-to-ankle vertical pixel span. Used as the
-  /// qualifying-movement reference (see [_kQualifyingMovementFraction]),
-  /// distinct from the individual baselines above.
-  double _bodyScalePx = 0;
-
   // Thresholds resolved once, from the athlete's calibrated body scale.
-  double _qualifyingMovementPx = 0;
-  double _hipTakeoffRisePx = 0;
-  double _ankleTakeoffRisePx = 0;
-  double _apexReversalPx = 0;
+  double _ankleAirborneRisePx = 0;
+  double _hipAirborneRisePx = 0;
   double _ankleLandingTolerancePx = 0;
   double _rearmTolerancePx = 0;
   double _driftTolerancePx = 0;
 
-  // Between-attempt re-arming.
+  // Re-arming after a confirmed attempt.
   DateTime? _rearmStableSince;
 
-  // Per-attempt tracking.
-  bool _qualifyingMovementSeen = false;
-  DateTime? _attemptStartTime;
+  // Airborne-candidate tracking while READY (pre-confirmation) and the
+  // confirmed airborne window itself. The hip-Y sample buffer starts filling
+  // as soon as a candidate streak begins, and is discarded unread if the
+  // streak breaks before confirmation - only a confirmed airborne event
+  // keeps its samples for the retrospective apex lookup.
+  DateTime? _airborneCandidateSince;
+  final List<double> _airborneHipYSamples = [];
   DateTime? _takeoffTime;
-  DateTime? _apexTime;
-  double? _runningMinHipY;
-  double? _apexHipY;
-  bool _multipleJumpDetected = false;
-  double _maxAbsHipXDriftPx = 0;
   DateTime? _landingCandidateSince;
+  double _maxAbsHipXDriftPx = 0;
   int _consecutiveNotVisible = 0;
 
   final List<JumpAttemptResult> _attempts = [];
@@ -211,11 +213,8 @@ class VerticalJumpEngine extends ExerciseEngine {
     _baselineHipY = null;
     _baselineAnkleY = null;
     _baselineHipX = null;
-    _bodyScalePx = 0;
-    _qualifyingMovementPx = 0;
-    _hipTakeoffRisePx = 0;
-    _ankleTakeoffRisePx = 0;
-    _apexReversalPx = 0;
+    _ankleAirborneRisePx = 0;
+    _hipAirborneRisePx = 0;
     _ankleLandingTolerancePx = 0;
     _rearmTolerancePx = 0;
     _driftTolerancePx = 0;
@@ -225,15 +224,11 @@ class VerticalJumpEngine extends ExerciseEngine {
   }
 
   void _resetAttemptState() {
-    _qualifyingMovementSeen = false;
-    _attemptStartTime = null;
+    _airborneCandidateSince = null;
+    _airborneHipYSamples.clear();
     _takeoffTime = null;
-    _apexTime = null;
-    _runningMinHipY = null;
-    _apexHipY = null;
-    _multipleJumpDetected = false;
-    _maxAbsHipXDriftPx = 0;
     _landingCandidateSince = null;
+    _maxAbsHipXDriftPx = 0;
     _consecutiveNotVisible = 0;
   }
 
@@ -264,12 +259,10 @@ class VerticalJumpEngine extends ExerciseEngine {
         _processCalibration(pose, hipY, ankleY, hipX, now);
       case _JumpState.awaitingBaseline:
         _processAwaitingBaseline(hipY, ankleY, now);
-      case _JumpState.armed:
-        _processArmed(hipY, ankleY, hipX, now);
+      case _JumpState.ready:
+        _processReady(hipY, ankleY, now);
       case _JumpState.airborne:
-        _processAirborne(hipY, hipX, now);
-      case _JumpState.falling:
-        _processFalling(hipY, ankleY, hipX, now);
+        _processAirborne(hipY, ankleY, hipX, now);
       case _JumpState.testComplete:
         break;
     }
@@ -285,13 +278,15 @@ class VerticalJumpEngine extends ExerciseEngine {
         _calHipX.clear();
       case _JumpState.awaitingBaseline:
         _rearmStableSince = null;
-      case _JumpState.armed:
-        // No attempt has genuinely started yet if there's been no
-        // qualifying movement - a transient dropout while just standing
-        // and waiting shouldn't cost anything.
-        if (_qualifyingMovementSeen) _bumpNotVisible();
+      case _JumpState.ready:
+        // No attempt exists yet - a dropout here just resets any
+        // in-progress (unconfirmed) airborne candidate streak. Nothing is
+        // consumed.
+        _airborneCandidateSince = null;
+        _airborneHipYSamples.clear();
       case _JumpState.airborne:
-      case _JumpState.falling:
+        // A genuine airborne event is already confirmed and in progress -
+        // losing tracking here is a real problem for this attempt.
         _bumpNotVisible();
       case _JumpState.testComplete:
         break;
@@ -347,15 +342,15 @@ class VerticalJumpEngine extends ExerciseEngine {
     _baselineHipY = avgHipY;
     _baselineAnkleY = avgAnkleY;
     _baselineHipX = avgHipX;
-    _bodyScalePx = bodyScalePx;
-    _qualifyingMovementPx = bodyScalePx * _kQualifyingMovementFraction;
-    _hipTakeoffRisePx = bodyScalePx * _kHipTakeoffRiseFraction;
-    _ankleTakeoffRisePx = bodyScalePx * _kAnkleTakeoffRiseFraction;
-    _apexReversalPx = bodyScalePx * _kApexReversalFraction;
+    _ankleAirborneRisePx = bodyScalePx * _kAnkleAirborneRiseFraction;
+    _hipAirborneRisePx = bodyScalePx * _kHipAirborneRiseFraction;
     _ankleLandingTolerancePx = bodyScalePx * _kAnkleLandingToleranceFraction;
     _rearmTolerancePx = bodyScalePx * _kRearmToleranceFraction;
     _driftTolerancePx = bodyScalePx * _kHorizontalDriftToleranceFraction;
-    _state = _JumpState.armed;
+    // Calibration is a one-time snapshot: from here on it never re-checks
+    // "is the athlete still standing like this" - it just handed off fixed
+    // references and gets out of the way.
+    _state = _JumpState.ready;
   }
 
   void _processAwaitingBaseline(double hipY, double ankleY, DateTime now) {
@@ -369,76 +364,49 @@ class VerticalJumpEngine extends ExerciseEngine {
 
     _rearmStableSince ??= now;
     if (now.difference(_rearmStableSince!) >= _kStabilityWindow) {
-      _state = _JumpState.armed;
+      _state = _JumpState.ready;
     }
   }
 
-  void _processArmed(double hipY, double ankleY, double hipX, DateTime now) {
-    _trackDrift(hipX);
-
+  /// Continuous observation. There is no "attempt started" event here: this
+  /// only ever looks for airborne evidence, and resets silently - no state
+  /// change, no bookkeeping kept - whenever that evidence isn't present.
+  /// Standing still, swaying, translating toward/away from the camera, or a
+  /// full squat-and-recover all fall through here indefinitely without
+  /// consequence, because ankle rise (which none of those produce) is
+  /// required alongside hip rise.
+  void _processReady(double hipY, double ankleY, DateTime now) {
     final hipRise = _baselineHipY! - hipY;
     final ankleRise = _baselineAnkleY! - ankleY;
+    final looksAirborne = ankleRise >= _ankleAirborneRisePx && hipRise >= _hipAirborneRisePx;
 
-    if (hipRise >= _hipTakeoffRisePx && ankleRise >= _ankleTakeoffRisePx) {
+    if (!looksAirborne) {
+      _airborneCandidateSince = null;
+      _airborneHipYSamples.clear();
+      return;
+    }
+
+    _airborneCandidateSince ??= now;
+    _airborneHipYSamples.add(hipY);
+
+    if (now.difference(_airborneCandidateSince!) >= _kAirborneConfirmationDuration) {
       _state = _JumpState.airborne;
-      _takeoffTime = now;
-      _runningMinHipY = hipY;
-      return;
-    }
-
-    // Genuine jump-initiating movement (a countermovement dip or an early
-    // upward drive) is knee/hip flexion, so it changes the athlete's own
-    // hip-to-ankle span. Incidental movement - stepping back, swaying, ML
-    // Kit jitter - shifts the hip and ankle landmarks together and leaves
-    // that span roughly unchanged, even though it moves the athlete away
-    // from the calibrated baseline. This is what lets the dotted baseline
-    // stay a measurement reference without doubling as an attempt trigger.
-    final hipAnkleSpan = ankleY - hipY;
-    final spanDeviation = (_bodyScalePx - hipAnkleSpan).abs();
-    if (spanDeviation >= _qualifyingMovementPx) {
-      _qualifyingMovementSeen = true;
-      _attemptStartTime ??= now;
-    } else if (_qualifyingMovementSeen) {
-      // A real movement attempt started and fully recovered back to
-      // standing without ever leaving the ground - a countermovement dip
-      // with no jump, not a valid attempt.
-      _finalizeAttempt(forcedReason: JumpInvalidReason.notAJump);
-      return;
-    }
-
-    if (_qualifyingMovementSeen && now.difference(_attemptStartTime!) > _kAttemptTimeout) {
-      _finalizeAttempt(forcedReason: JumpInvalidReason.notAJump);
+      _takeoffTime = _airborneCandidateSince;
+      _maxAbsHipXDriftPx = 0;
     }
   }
 
-  void _processAirborne(double hipY, double hipX, DateTime now) {
+  /// A genuine airborne event is already confirmed. From here the only
+  /// questions are: has the athlete landed, and did the confirmed jump stay
+  /// within validity tolerances - never whether the attempt "counts".
+  void _processAirborne(double hipY, double ankleY, double hipX, DateTime now) {
+    _airborneHipYSamples.add(hipY);
     _trackDrift(hipX);
 
-    if (hipY < _runningMinHipY!) _runningMinHipY = hipY;
-
-    final reversal = hipY - _runningMinHipY!;
-    if (reversal >= _apexReversalPx) {
-      _apexHipY = _runningMinHipY;
-      _apexTime = now;
-      _state = _JumpState.falling;
-      return;
-    }
-
-    if (now.difference(_takeoffTime!) > _kMaxAirborneToApexDuration) {
-      _finalizeAttempt(forcedReason: JumpInvalidReason.insufficientData);
-    }
-  }
-
-  void _processFalling(double hipY, double ankleY, double hipX, DateTime now) {
-    _trackDrift(hipX);
-
-    final hipRise = _baselineHipY! - hipY;
     final ankleRise = _baselineAnkleY! - ankleY;
-    final reAscending = hipRise >= _hipTakeoffRisePx && ankleRise >= _ankleTakeoffRisePx;
-    if (reAscending) _multipleJumpDetected = true;
+    final looksLanded = ankleRise <= _ankleLandingTolerancePx;
 
-    final ankleNearBaseline = ankleRise <= _ankleLandingTolerancePx;
-    if (ankleNearBaseline && !reAscending) {
+    if (looksLanded) {
       _landingCandidateSince ??= now;
       if (now.difference(_landingCandidateSince!) >= _kLandingDebounce) {
         _finalizeAttempt();
@@ -448,7 +416,7 @@ class VerticalJumpEngine extends ExerciseEngine {
       _landingCandidateSince = null;
     }
 
-    if (now.difference(_apexTime!) > _kMaxFallingToLandingDuration) {
+    if (now.difference(_takeoffTime!) > _kMaxAirborneDuration) {
       _finalizeAttempt(forcedReason: JumpInvalidReason.insufficientData);
     }
   }
@@ -458,6 +426,9 @@ class VerticalJumpEngine extends ExerciseEngine {
     if (drift > _maxAbsHipXDriftPx) _maxAbsHipXDriftPx = drift;
   }
 
+  /// Only ever called from [_JumpState.airborne] - by definition, a genuine
+  /// airborne event has already happened, so this always consumes one of
+  /// the three attempts. The only open question is whether it's valid.
   void _finalizeAttempt({JumpInvalidReason? forcedReason}) {
     final attemptNumber = _attempts.length + 1;
     final JumpAttemptResult result;
@@ -468,26 +439,18 @@ class VerticalJumpEngine extends ExerciseEngine {
         isValid: false,
         invalidReason: forcedReason,
       );
-    } else if (_multipleJumpDetected) {
-      result = JumpAttemptResult(
-        attemptNumber: attemptNumber,
-        isValid: false,
-        invalidReason: JumpInvalidReason.multipleJump,
-      );
     } else if (_maxAbsHipXDriftPx > _driftTolerancePx) {
       result = JumpAttemptResult(
         attemptNumber: attemptNumber,
         isValid: false,
         invalidReason: JumpInvalidReason.excessiveDrift,
       );
-    } else if (_apexHipY == null) {
-      result = JumpAttemptResult(
-        attemptNumber: attemptNumber,
-        isValid: false,
-        invalidReason: JumpInvalidReason.insufficientData,
-      );
     } else {
-      final heightPx = _baselineHipY! - _apexHipY!;
+      // Retrospective apex: the minimum raw hip Y reached anywhere during
+      // the confirmed airborne window, found only now that the window is
+      // closed - never chased causally frame-by-frame.
+      final minHipY = _airborneHipYSamples.reduce((a, b) => a < b ? a : b);
+      final heightPx = _baselineHipY! - minHipY;
       final heightCm = heightPx * _cmPerPixel!;
       result = JumpAttemptResult(attemptNumber: attemptNumber, isValid: true, heightCm: heightCm);
     }
@@ -499,13 +462,12 @@ class VerticalJumpEngine extends ExerciseEngine {
       _state = _JumpState.testComplete;
     } else {
       _state = _JumpState.awaitingBaseline;
+      _rearmStableSince = null;
     }
   }
 
   String _reasonLabel(JumpInvalidReason reason) => switch (reason) {
-    JumpInvalidReason.notAJump => 'not a jump - no airborne phase',
     JumpInvalidReason.excessiveDrift => 'excessive horizontal drift',
-    JumpInvalidReason.multipleJump => 'multiple jumps in one attempt',
     JumpInvalidReason.insufficientData => 'tracking lost',
   };
 
@@ -551,22 +513,18 @@ class VerticalJumpEngine extends ExerciseEngine {
           isBodyVisible: _isBodyVisible,
         );
 
-      case _JumpState.armed:
+      case _JumpState.ready:
         return ExerciseStatus(
           primaryText: 'Attempt ${_attempts.length + 1}/$kMaxAttempts - Ready',
-          secondaryText: _qualifyingMovementSeen ? 'Movement detected - jump!' : 'Jump when ready',
+          secondaryText: _airborneCandidateSince != null
+              ? 'Movement detected - jump!'
+              : 'Jump when ready',
           isBodyVisible: _isBodyVisible,
         );
 
       case _JumpState.airborne:
         return ExerciseStatus(
           primaryText: 'Attempt ${_attempts.length + 1}/$kMaxAttempts - Airborne',
-          isBodyVisible: _isBodyVisible,
-        );
-
-      case _JumpState.falling:
-        return ExerciseStatus(
-          primaryText: 'Attempt ${_attempts.length + 1}/$kMaxAttempts - Landing',
           isBodyVisible: _isBodyVisible,
         );
 

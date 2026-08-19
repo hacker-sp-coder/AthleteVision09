@@ -30,6 +30,14 @@ class LiveTestScreen extends StatefulWidget {
 
 class _LiveTestScreenState extends State<LiveTestScreen> {
   static const int _frameSkip = 2;
+
+  /// How long the most recently displayed pose is kept on screen after a
+  /// processed frame returns no pose at all, before the skeleton overlay is
+  /// cleared. Purely visual hysteresis to bridge a transient ML Kit
+  /// detection miss (e.g. motion blur near a jump's peak) - the exercise
+  /// engine always receives the real per-frame result regardless of this.
+  static const Duration _poseDisplayGracePeriod = Duration(milliseconds: 250);
+
   static const Map<DeviceOrientation, int> _orientations = {
     DeviceOrientation.portraitUp: 0,
     DeviceOrientation.landscapeLeft: 90,
@@ -53,7 +61,12 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
   String? _statusSecondary;
   bool _isBodyVisible = true;
 
-  Pose? _lastPose;
+  /// The pose currently shown by the skeleton overlay. Distinct from the
+  /// per-frame result passed to [_engine] - this may briefly still hold the
+  /// previous frame's pose during a transient ML Kit miss (see
+  /// [_poseDisplayGracePeriod]), which the engine must never see.
+  Pose? _displayPose;
+  DateTime? _displayPoseSeenAt;
   Size? _lastImageSize;
   InputImageRotation? _lastRotation;
 
@@ -112,12 +125,13 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
   void _onStartPressed() {
     _engine.reset();
     _frameCounter = 0;
+    _displayPoseSeenAt = null;
     setState(() {
       _isRunning = true;
       _statusPrimary = '';
       _statusSecondary = null;
       _isBodyVisible = true;
-      _lastPose = null;
+      _displayPose = null;
     });
     _controller!.startImageStream(_handleCameraImage);
   }
@@ -125,9 +139,10 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
   Future<void> _onStopPressed() async {
     await _controller?.stopImageStream();
     if (!mounted) return;
+    _displayPoseSeenAt = null;
     setState(() {
       _isRunning = false;
-      _lastPose = null;
+      _displayPose = null;
     });
   }
 
@@ -147,17 +162,36 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
 
       final poses = await _poseDetector.processImage(inputImage);
       final pose = poses.isNotEmpty ? poses.first : null;
+      // The exercise engine always sees this frame's real result - never
+      // the held display pose computed below.
       _engine.processPose(pose);
 
       final status = _engine.status;
       if (!mounted) return;
+
+      final now = DateTime.now();
+      final Pose? displayPose;
+      if (pose != null) {
+        displayPose = pose;
+        _displayPoseSeenAt = now;
+      } else if (_displayPose != null &&
+          _displayPoseSeenAt != null &&
+          now.difference(_displayPoseSeenAt!) <= _poseDisplayGracePeriod) {
+        // Transient ML Kit miss - briefly keep showing the last known-good
+        // pose. Display-only: this frame's real (null) result already went
+        // to the engine above.
+        displayPose = _displayPose;
+      } else {
+        displayPose = null;
+      }
+
       // Every processed frame is reflected here (not just on status-text
       // change) so the skeleton overlay tracks the body live.
       setState(() {
         _statusPrimary = status.primaryText;
         _statusSecondary = status.secondaryText;
         _isBodyVisible = status.isBodyVisible;
-        _lastPose = pose;
+        _displayPose = displayPose;
         _lastImageSize = inputImage.metadata!.size;
         _lastRotation = inputImage.metadata!.rotation;
       });
@@ -267,10 +301,10 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
             fit: StackFit.expand,
             children: [
               CameraPreview(_controller!),
-              if (_lastPose != null && _lastImageSize != null && _lastRotation != null)
+              if (_displayPose != null && _lastImageSize != null && _lastRotation != null)
                 CustomPaint(
                   painter: PosePainter(
-                    pose: _lastPose!,
+                    pose: _displayPose!,
                     imageSize: _lastImageSize!,
                     rotation: _lastRotation!,
                     cameraLensDirection: _cameras[_cameraIndex].lensDirection,
