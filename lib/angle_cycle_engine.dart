@@ -1,0 +1,279 @@
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+
+import 'exercise_config.dart';
+import 'exercise_engine.dart';
+import 'form_check.dart';
+import 'pose_utils.dart';
+import 'sided_pose.dart';
+
+enum _CyclePhase { top, descending, bottom, ascending }
+
+/// Reusable rep-cycle mechanics for any exercise whose repetitions are
+/// characterized by a single joint angle cycling TOP -> DESCENDING ->
+/// BOTTOM -> ASCENDING -> TOP. Contains no exercise-specific biomechanics -
+/// everything exercise-specific (which landmarks, which thresholds, which
+/// form checks) lives in the [ExerciseConfig] it's constructed with.
+class AngleCycleEngine extends ExerciseEngine {
+  AngleCycleEngine({required this.config});
+
+  final ExerciseConfig config;
+
+  bool? _preferredSideIsLeft;
+
+  bool _calibrated = false;
+  DateTime? _stableSince;
+  final List<FormCheckContext> _stabilitySamples = [];
+  ExerciseReference? _reference;
+  String _calibrationMessage = '';
+
+  double? _smoothedAngle;
+  _CyclePhase _phase = _CyclePhase.top;
+  int _repCount = 0;
+  DateTime? _lastRepTime;
+
+  int _consecutiveUncertain = 0;
+  CheckStatus _formStatus = CheckStatus.uncertain;
+  String _formReason = '';
+  bool _isBodyVisible = false;
+
+  @override
+  void reset() {
+    _preferredSideIsLeft = null;
+    _calibrated = false;
+    _stableSince = null;
+    _stabilitySamples.clear();
+    _reference = null;
+    _calibrationMessage = config.setupInstruction;
+    _smoothedAngle = null;
+    _phase = _CyclePhase.top;
+    _repCount = 0;
+    _lastRepTime = null;
+    _consecutiveUncertain = 0;
+    _formStatus = CheckStatus.uncertain;
+    _formReason = '';
+    _isBodyVisible = false;
+  }
+
+  FormCheckResult _evaluateChecks(FormCheckContext context) {
+    for (final check in config.formChecks) {
+      final result = check.evaluate(context);
+      if (result.status != CheckStatus.valid) return result;
+    }
+    return FormCheckResult.ok;
+  }
+
+  double? _primaryAngle(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final (a, b, c) = config.angleLandmarks;
+    final pa = sided[a];
+    final pb = sided[b];
+    final pc = sided[c];
+    if (pa == null || pb == null || pc == null) return null;
+    return angleBetweenPoints(pa, pb, pc);
+  }
+
+  ExerciseReference _buildReference(List<FormCheckContext> samples) {
+    final values = <String, double>{};
+    for (final check in config.formChecks) {
+      final key = check.referenceKey;
+      if (key == null) continue;
+      final samplesForCheck =
+          samples.map(check.sampleValue).whereType<double>().toList();
+      if (samplesForCheck.isEmpty) continue;
+      values[key] = samplesForCheck.reduce((a, b) => a + b) / samplesForCheck.length;
+    }
+    return ExerciseReference(values);
+  }
+
+  @override
+  void processPose(Pose? pose) {
+    if (pose == null) {
+      _isBodyVisible = false;
+      if (!_calibrated) {
+        _stableSince = null;
+        _stabilitySamples.clear();
+        _calibrationMessage = config.setupInstruction;
+      } else {
+        _registerCheckResult(
+          const FormCheckResult(CheckStatus.uncertain, 'Body not detected'),
+        );
+      }
+      return;
+    }
+
+    _isBodyVisible = true;
+
+    if (!_calibrated) {
+      _processCalibrationFrame(pose);
+    } else {
+      _processTrackingFrame(pose);
+    }
+  }
+
+  void _processCalibrationFrame(Pose pose) {
+    final sidedPose = resolveSidedPose(
+      pose,
+      requiredPoints: config.requiredPoints,
+      confidenceThreshold: config.landmarkConfidenceThreshold,
+      preferLeftSide: _preferredSideIsLeft,
+    );
+    if (sidedPose != null) _preferredSideIsLeft = sidedPose.isLeftSide;
+
+    final context = FormCheckContext(pose: pose, sidedPose: sidedPose);
+    final result = _evaluateChecks(context);
+
+    if (result.status == CheckStatus.valid) {
+      final isFirstFrameOfStreak = _stableSince == null;
+      _stableSince ??= DateTime.now();
+      _stabilitySamples.add(context);
+      final elapsed = DateTime.now().difference(_stableSince!);
+
+      if (elapsed >= config.stabilityWindow) {
+        _reference = _buildReference(_stabilitySamples);
+        _calibrated = true;
+        _phase = _CyclePhase.top;
+        _smoothedAngle = _primaryAngle(context);
+        _calibrationMessage = 'Starting position locked';
+      } else if (isFirstFrameOfStreak) {
+        _calibrationMessage = 'Valid position detected - hold still...';
+      } else {
+        final pct = (elapsed.inMilliseconds / config.stabilityWindow.inMilliseconds * 100)
+            .clamp(0, 100)
+            .toStringAsFixed(0);
+        _calibrationMessage = 'Hold still... $pct%';
+      }
+      return;
+    }
+
+    _stableSince = null;
+    _stabilitySamples.clear();
+    _calibrationMessage = sidedPose == null ? config.setupInstruction : result.reason;
+  }
+
+  void _processTrackingFrame(Pose pose) {
+    final sidedPose = resolveSidedPose(
+      pose,
+      requiredPoints: config.requiredPoints,
+      confidenceThreshold: config.landmarkConfidenceThreshold,
+      preferLeftSide: _preferredSideIsLeft,
+    );
+    if (sidedPose != null) _preferredSideIsLeft = sidedPose.isLeftSide;
+
+    final context = FormCheckContext(pose: pose, sidedPose: sidedPose, reference: _reference);
+    final result = _evaluateChecks(context);
+
+    // Smoothed angle keeps tracking whenever computable, independent of
+    // check status, so tracking resumes cleanly once good form returns.
+    final rawAngle = _primaryAngle(context);
+    if (rawAngle != null) {
+      _smoothedAngle = _smoothedAngle == null
+          ? rawAngle
+          : config.emaAlpha * rawAngle + (1 - config.emaAlpha) * _smoothedAngle!;
+    }
+
+    _registerCheckResult(result, smoothedAngle: _smoothedAngle);
+  }
+
+  void _registerCheckResult(FormCheckResult result, {double? smoothedAngle}) {
+    switch (result.status) {
+      case CheckStatus.valid:
+        _consecutiveUncertain = 0;
+        _formStatus = CheckStatus.valid;
+        _formReason = result.reason;
+        if (smoothedAngle != null) _advancePhase(smoothedAngle);
+      case CheckStatus.uncertain:
+        _consecutiveUncertain++;
+        _formReason = result.reason;
+        if (_consecutiveUncertain > config.maxUncertainFrames) {
+          _formStatus = CheckStatus.invalid;
+          _invalidateTrajectory();
+        } else {
+          // Isolated ML Kit noise shouldn't destroy a legitimate rep: don't
+          // advance the state machine, but don't invalidate it either.
+          _formStatus = CheckStatus.uncertain;
+        }
+      case CheckStatus.invalid:
+        _consecutiveUncertain = 0;
+        _formStatus = CheckStatus.invalid;
+        _formReason = result.reason;
+        _invalidateTrajectory();
+    }
+  }
+
+  /// A fresh valid TOP is required to start a new attempt - whatever
+  /// partial descent/ascent progress existed is discarded, no rep counted.
+  void _invalidateTrajectory() {
+    _phase = _CyclePhase.top;
+  }
+
+  void _advancePhase(double angle) {
+    switch (_phase) {
+      case _CyclePhase.top:
+        if (angle < config.topAngleThresholdDeg) {
+          _phase = _CyclePhase.descending;
+        }
+      case _CyclePhase.descending:
+        if (angle <= config.bottomAngleThresholdDeg) {
+          _phase = _CyclePhase.bottom;
+        } else if (angle >= config.topAngleThresholdDeg) {
+          _phase = _CyclePhase.top; // Didn't reach bottom - aborted, no rep.
+        }
+      case _CyclePhase.bottom:
+        if (angle > config.bottomAngleThresholdDeg) {
+          _phase = _CyclePhase.ascending;
+        }
+      case _CyclePhase.ascending:
+        if (angle >= config.topAngleThresholdDeg) {
+          final now = DateTime.now();
+          if (_lastRepTime == null || now.difference(_lastRepTime!) >= config.minRepInterval) {
+            _repCount++;
+            _lastRepTime = now;
+          }
+          _phase = _CyclePhase.top;
+        } else if (angle <= config.bottomAngleThresholdDeg) {
+          _phase = _CyclePhase.bottom; // Slipped back down before completing.
+        }
+    }
+  }
+
+  String get _phaseLabel {
+    switch (_phase) {
+      case _CyclePhase.top:
+        return 'TOP';
+      case _CyclePhase.descending:
+        return 'DESCENDING';
+      case _CyclePhase.bottom:
+        return 'BOTTOM';
+      case _CyclePhase.ascending:
+        return 'ASCENDING';
+    }
+  }
+
+  @override
+  ExerciseStatus get status {
+    if (!_isBodyVisible) {
+      return ExerciseStatus(
+        primaryText: config.setupInstruction,
+        secondaryText: 'Body not detected',
+        isBodyVisible: false,
+      );
+    }
+
+    if (!_calibrated) {
+      return ExerciseStatus(
+        primaryText: 'Calibrating',
+        secondaryText: _calibrationMessage,
+        isBodyVisible: true,
+      );
+    }
+
+    final formLabel = _formStatus.name.toUpperCase();
+    final formText = _formReason.isEmpty ? formLabel : '$formLabel - $_formReason';
+    return ExerciseStatus(
+      primaryText: 'Reps: $_repCount',
+      secondaryText: 'Form: $formText   •   Phase: $_phaseLabel',
+      isBodyVisible: true,
+    );
+  }
+}

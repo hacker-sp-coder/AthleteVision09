@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
+import 'angle_cycle_engine.dart';
+import 'exercise_config.dart';
 import 'exercise_engine.dart';
 import 'pose_painter.dart';
 
@@ -59,7 +61,7 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
     super.initState();
     _engine = widget.exerciseType == ExerciseType.verticalJump
         ? VerticalJumpEngine(userHeightCm: widget.userHeightCm!)
-        : PushUpEngine();
+        : AngleCycleEngine(config: pushUpExerciseConfig);
     _poseDetector = PoseDetector(
       options: PoseDetectorOptions(
         model: PoseDetectionModel.base,
