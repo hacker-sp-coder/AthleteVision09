@@ -544,6 +544,41 @@ class BottomEventContext {
   final List<double> shoulderYSamples;
 }
 
+/// Outcome of an event-triggered [BottomEventValidator] verdict. Distinct
+/// from [CheckStatus]: a bottom event's local knee-angle ROM already looked
+/// like a real rep, so a validator here must further distinguish *why* the
+/// whole-body movement didn't hold up, since only some of those reasons are
+/// genuine form violations.
+enum BottomEventOutcome {
+  /// Whole-body displacement never cleared the qualifying floor - this
+  /// wasn't a squat attempt at all (e.g. a local knee/ankle manipulation
+  /// while standing still). No rep, no warning.
+  noQualifyingAttempt,
+
+  /// Genuine whole-body movement occurred but didn't reach the required
+  /// depth. No rep, no warning - just try again.
+  insufficientDepth,
+
+  /// A qualifying, sufficiently deep attempt broke a real form constraint.
+  /// Feeds the existing warning/termination lifecycle.
+  formViolation,
+
+  /// Not enough reliable data to judge the event either way.
+  uncertain,
+
+  /// A genuine, sufficiently deep, form-valid rep.
+  valid,
+}
+
+class BottomEventResult {
+  const BottomEventResult(this.outcome, this.reason);
+
+  static const ok = BottomEventResult(BottomEventOutcome.valid, '');
+
+  final BottomEventOutcome outcome;
+  final String reason;
+}
+
 /// Validates that an `AngleCycleEngine`-detected BOTTOM event represents
 /// genuine whole-body movement rather than a local joint-angle
 /// manipulation. Complements the continuous [FormCheck]s, which never see
@@ -551,17 +586,19 @@ class BottomEventContext {
 abstract class BottomEventValidator {
   const BottomEventValidator();
 
-  FormCheckResult validate(BottomEventContext context);
+  BottomEventResult validate(BottomEventContext context);
 }
 
-/// Rejects a BOTTOM event that isn't backed by meaningful downward hip
-/// travel, or where the apparent descent is primarily an upper-body fold
+/// Classifies a BOTTOM event by how much genuine downward hip travel backed
+/// it, and - only once that travel is deep enough to count as a real
+/// attempt - whether the apparent descent was primarily an upper-body fold
 /// rather than genuine hip/knee movement.
 class HipDisplacementValidator extends BottomEventValidator {
   const HipDisplacementValidator({
     this.hipBaselineKey = 'hipBaselineY',
     this.shoulderBaselineKey = 'shoulderBaselineY',
     this.scaleReferenceKey = 'scaleReferencePx',
+    this.minQualifyingNormalizedHipDisplacement = 0.18,
     this.minNormalizedHipDisplacement = 0.30,
     this.maxShoulderToHipDisplacementRatio = 2.5,
   });
@@ -570,10 +607,18 @@ class HipDisplacementValidator extends BottomEventValidator {
   final String shoulderBaselineKey;
   final String scaleReferenceKey;
 
+  /// Small displacement floor, normalized by the athlete's calibrated
+  /// hip-to-ankle segment length, whose only job is to tell whether *any*
+  /// genuine whole-body squat-like movement happened at all - as opposed to
+  /// a local knee/ankle manipulation while otherwise standing still (e.g.
+  /// raising one foot). Chosen from the middle of the requested 15-20%
+  /// range. Deliberately much smaller than
+  /// [minNormalizedHipDisplacement], which judges actual squat depth.
+  final double minQualifyingNormalizedHipDisplacement;
+
   /// Minimum downward hip-midpoint displacement at BOTTOM, normalized by
-  /// the athlete's calibrated hip-to-ankle segment length, required to
-  /// accept the rep as genuine whole-body movement rather than a local
-  /// knee/ankle manipulation (e.g. raising one foot while standing).
+  /// the athlete's calibrated hip-to-ankle segment length, required for the
+  /// attempt to count as reaching full squat depth.
   final double minNormalizedHipDisplacement;
 
   /// How many times larger the shoulder's vertical displacement is allowed
@@ -586,7 +631,7 @@ class HipDisplacementValidator extends BottomEventValidator {
   double _average(List<double> samples) => samples.reduce((a, b) => a + b) / samples.length;
 
   @override
-  FormCheckResult validate(BottomEventContext context) {
+  BottomEventResult validate(BottomEventContext context) {
     final hipBaseline = context.reference.get(hipBaselineKey);
     final shoulderBaseline = context.reference.get(shoulderBaselineKey);
     final scaleReference = context.reference.get(scaleReferenceKey);
@@ -597,7 +642,10 @@ class HipDisplacementValidator extends BottomEventValidator {
         scaleReference <= 0 ||
         context.hipYSamples.isEmpty ||
         context.shoulderYSamples.isEmpty) {
-      return const FormCheckResult(CheckStatus.uncertain, 'Movement reference unavailable');
+      return const BottomEventResult(
+        BottomEventOutcome.uncertain,
+        'Movement reference unavailable',
+      );
     }
 
     final bottomHipY = _average(context.hipYSamples);
@@ -609,20 +657,31 @@ class HipDisplacementValidator extends BottomEventValidator {
     final shoulderDisplacement = bottomShoulderY - shoulderBaseline;
 
     final normalizedHipDisplacement = hipDisplacement / scaleReference;
+
+    if (normalizedHipDisplacement < minQualifyingNormalizedHipDisplacement) {
+      // No meaningful whole-body movement at all - not a form violation,
+      // just not a squat attempt.
+      return const BottomEventResult(
+        BottomEventOutcome.noQualifyingAttempt,
+        'No qualifying squat movement detected',
+      );
+    }
+
     if (normalizedHipDisplacement < minNormalizedHipDisplacement) {
-      return const FormCheckResult(
-        CheckStatus.invalid,
-        'Hips did not move down enough - squat with your whole body, not just your knee',
+      // Real movement, but not deep enough yet - also not a form violation.
+      return const BottomEventResult(
+        BottomEventOutcome.insufficientDepth,
+        'Squat depth not reached - lower your hips further',
       );
     }
 
     if (shoulderDisplacement > hipDisplacement * maxShoulderToHipDisplacementRatio) {
-      return const FormCheckResult(
-        CheckStatus.invalid,
+      return const BottomEventResult(
+        BottomEventOutcome.formViolation,
         'Bend at the hips and knees - do not just fold your upper body forward',
       );
     }
 
-    return FormCheckResult.ok;
+    return BottomEventResult.ok;
   }
 }

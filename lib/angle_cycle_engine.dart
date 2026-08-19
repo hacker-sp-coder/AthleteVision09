@@ -377,25 +377,31 @@ class AngleCycleEngine extends ExerciseEngine {
       ),
     );
 
-    switch (result.status) {
-      case CheckStatus.valid:
+    switch (result.outcome) {
+      case BottomEventOutcome.valid:
         _phase = _CyclePhase.bottom;
-      case CheckStatus.invalid:
-        // A knee angle that reached bottom depth without genuine whole-body
-        // movement is a confirmed anti-cheat violation, not a silently
-        // discarded rep - counting a fake squat is worse than costing a
-        // warning. Registered immediately rather than through the sustained
-        // ~800ms INVALID-frame debounce used for continuous FormChecks:
-        // that debounce exists to filter noisy per-frame signals, but this
-        // one-shot event decision is already smoothed via the temporal
-        // sample window above.
+      case BottomEventOutcome.noQualifyingAttempt:
+      case BottomEventOutcome.insufficientDepth:
+        // Either no real whole-body movement happened at all (e.g. a local
+        // knee/ankle manipulation while standing still) or it happened but
+        // didn't reach depth. Neither is a form violation - silently
+        // abandon this trajectory back to TOP with no rep and no warning.
+        _invalidateTrajectory();
+      case BottomEventOutcome.formViolation:
+        // A qualifying, sufficiently deep attempt broke a real form
+        // constraint - a confirmed anti-cheat violation, not a silently
+        // discarded rep. Registered immediately rather than through the
+        // sustained ~800ms INVALID-frame debounce used for continuous
+        // FormChecks: that debounce exists to filter noisy per-frame
+        // signals, but this one-shot event decision is already smoothed via
+        // the temporal sample window above.
         _formStatus = CheckStatus.invalid;
         _formReason = result.reason;
         _invalidateTrajectory();
         _violationConfirmedThisEpisode = true;
         _invalidSince ??= DateTime.now();
         _registerConfirmedViolation();
-      case CheckStatus.uncertain:
+      case BottomEventOutcome.uncertain:
         // Not enough reliable displacement data yet - treat like an
         // insufficient-depth reading rather than penalizing the athlete for
         // a transient landmark dropout.
