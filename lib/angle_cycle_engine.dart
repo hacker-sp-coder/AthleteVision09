@@ -22,6 +22,11 @@ class AngleCycleEngine extends ExerciseEngine {
   /// warnings, then termination on the third.
   static const int _maxWarnings = 2;
 
+  /// Minimum rise (in degrees) from the tracked descent minimum required to
+  /// treat the movement as a genuine direction reversal rather than sensor
+  /// noise. Chosen from the middle of the requested 5-8 degree range.
+  static const double _reversalThresholdDeg = 6.0;
+
   bool? _preferredSideIsLeft;
 
   bool _calibrated = false;
@@ -34,6 +39,12 @@ class AngleCycleEngine extends ExerciseEngine {
   _CyclePhase _phase = _CyclePhase.top;
   int _repCount = 0;
   DateTime? _lastRepTime;
+
+  /// Lowest raw (unsmoothed) movement-signal angle observed during the
+  /// current DESCENDING phase. Used to detect a genuine bottom independent
+  /// of the EMA-smoothed angle, which lags too much to reliably catch fast
+  /// reps.
+  double? _descentMinAngle;
 
   int _consecutiveUncertain = 0;
   CheckStatus _formStatus = CheckStatus.uncertain;
@@ -60,6 +71,7 @@ class AngleCycleEngine extends ExerciseEngine {
     _phase = _CyclePhase.top;
     _repCount = 0;
     _lastRepTime = null;
+    _descentMinAngle = null;
     _consecutiveUncertain = 0;
     _formStatus = CheckStatus.uncertain;
     _formReason = '';
@@ -185,6 +197,8 @@ class AngleCycleEngine extends ExerciseEngine {
 
     // Smoothed angle keeps tracking whenever computable, independent of
     // check status, so tracking resumes cleanly once good form returns.
+    // This EMA signal is retained purely for form/status purposes and is
+    // never used to drive phase transitions.
     final rawAngle = _primaryAngle(context);
     if (rawAngle != null) {
       _smoothedAngle = _smoothedAngle == null
@@ -192,16 +206,20 @@ class AngleCycleEngine extends ExerciseEngine {
           : config.emaAlpha * rawAngle + (1 - config.emaAlpha) * _smoothedAngle!;
     }
 
-    _registerCheckResult(result, smoothedAngle: _smoothedAngle);
+    // Phase transitions use the raw (unsmoothed) angle as the movement
+    // signal, not the EMA above - the EMA's lag can prevent it from ever
+    // reaching bottomAngleThresholdDeg during a fast rep even though the
+    // real joint angle did.
+    _registerCheckResult(result, movementAngle: rawAngle);
   }
 
-  void _registerCheckResult(FormCheckResult result, {double? smoothedAngle}) {
+  void _registerCheckResult(FormCheckResult result, {double? movementAngle}) {
     switch (result.status) {
       case CheckStatus.valid:
         _consecutiveUncertain = 0;
         _formStatus = CheckStatus.valid;
         _formReason = result.reason;
-        if (smoothedAngle != null) _advancePhase(smoothedAngle);
+        if (movementAngle != null) _advancePhase(movementAngle);
       case CheckStatus.uncertain:
         _consecutiveUncertain++;
         _formReason = result.reason;
@@ -226,6 +244,7 @@ class AngleCycleEngine extends ExerciseEngine {
   /// partial descent/ascent progress existed is discarded, no rep counted.
   void _invalidateTrajectory() {
     _phase = _CyclePhase.top;
+    _descentMinAngle = null;
   }
 
   /// Advances the warning/termination lifecycle from the current
@@ -266,12 +285,29 @@ class AngleCycleEngine extends ExerciseEngine {
       case _CyclePhase.top:
         if (angle < config.topAngleThresholdDeg) {
           _phase = _CyclePhase.descending;
+          _descentMinAngle = angle;
         }
       case _CyclePhase.descending:
-        if (angle <= config.bottomAngleThresholdDeg) {
-          _phase = _CyclePhase.bottom;
-        } else if (angle >= config.topAngleThresholdDeg) {
-          _phase = _CyclePhase.top; // Didn't reach bottom - aborted, no rep.
+        final currentMin = _descentMinAngle;
+        _descentMinAngle = currentMin == null || angle < currentMin ? angle : currentMin;
+
+        if (angle >= config.topAngleThresholdDeg) {
+          // Recovered all the way back to top without ever reversing out of
+          // a sufficient bottom - aborted, no rep.
+          _phase = _CyclePhase.top;
+          _descentMinAngle = null;
+        } else if (angle - _descentMinAngle! >= _reversalThresholdDeg) {
+          // The angle has risen a non-trivial amount off the lowest point
+          // reached during this descent - a genuine reversal, not sensor
+          // noise. Judge depth from the tracked minimum, not this frame's
+          // instantaneous value.
+          if (_descentMinAngle! <= config.bottomAngleThresholdDeg) {
+            _phase = _CyclePhase.bottom;
+          } else {
+            // Insufficient depth - don't count a rep. Keep watching for
+            // either a real bottom or a full recovery to top from here.
+            _descentMinAngle = angle;
+          }
         }
       case _CyclePhase.bottom:
         if (angle > config.bottomAngleThresholdDeg) {
@@ -285,6 +321,7 @@ class AngleCycleEngine extends ExerciseEngine {
             _lastRepTime = now;
           }
           _phase = _CyclePhase.top;
+          _descentMinAngle = null;
         } else if (angle <= config.bottomAngleThresholdDeg) {
           _phase = _CyclePhase.bottom; // Slipped back down before completing.
         }
