@@ -1,0 +1,254 @@
+:root {
+  font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  color: #14213d;
+}
+
+.landing-page {
+  min-height: 100svh;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px clamp(20px, 5vw, 64px) 32px;
+  color: #14213d;
+  background:
+    linear-gradient(rgba(48, 105, 210, .055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(48, 105, 210, .055) 1px, transparent 1px),
+    radial-gradient(circle at 80% 4%, rgba(114, 190, 255, .38), transparent 30%),
+    linear-gradient(145deg, #f8fbff 0%, #edf4ff 56%, #f8f5ff 100%);
+  background-size: 42px 42px, 42px 42px, auto, auto;
+  isolation: isolate;
+}
+
+.landing-page__glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: -1;
+  filter: blur(4px);
+}
+
+.landing-page__glow--one {
+  width: 34vw;
+  height: 34vw;
+  top: -22vw;
+  right: -8vw;
+  background: rgba(92, 171, 255, .2);
+}
+
+.landing-page__glow--two {
+  width: 30vw;
+  height: 30vw;
+  bottom: -20vw;
+  left: -12vw;
+  background: rgba(177, 139, 255, .13);
+}
+
+.brand-block {
+  width: min(100%, 700px);
+  margin: auto 0 64px;
+  text-align: center;
+}
+
+.brand-block h1 {
+  color: #14213d;
+  font-size: clamp(38px, 5vw, 64px);
+  line-height: 1;
+  letter-spacing: -.8px;
+  font-weight: 800;
+}
+
+.brand-block__tagline {
+  margin-top: 42px;
+  color: #3068c8;
+  font-weight: 700;
+  font-size: clamp(20px, 2.3vw, 29px);
+}
+
+.brand-block__subline {
+  margin-top: 12px;
+  color: #687896;
+  font-size: clamp(15px, 1.5vw, 20px);
+}
+
+/* Keep the role selector centered and constrained on every viewport. */
+.role-list { 
+  width: min(100%, 650px); 
+  display: grid; 
+  gap: 18px; 
+  justify-items: center;
+}
+
+.role-card { 
+  width: 100%; 
+  min-height: 136px;
+  padding: 22px 27px; 
+  display: flex; 
+  align-items: center; 
+  gap: 22px; 
+  border: 0; 
+  border-radius: 22px; 
+  background: rgba(255, 255, 255, .94);
+  color: #19243a; 
+  text-align: left; 
+  box-shadow: 0 14px 32px rgba(47, 78, 130, .13), 0 2px 5px rgba(47, 78, 130, .06);
+  cursor: pointer; 
+  transition: transform .2s ease, box-shadow .2s ease; 
+  
+  position: relative;
+  overflow: hidden;
+}
+
+.role-card__icon,
+.role-card__copy,
+.role-card__arrow {
+  pointer-events: none;
+}
+
+.role-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 38px rgba(47, 78, 130, .19), 0 3px 8px rgba(47, 78, 130, .08);
+}
+
+.role-card:focus-visible {
+  outline: 3px solid #b9e4ff;
+  outline-offset: 4px;
+}
+
+.role-card__icon {
+  width: 74px;
+  height: 74px;
+  flex: 0 0 74px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.role-card__icon--athlete {
+  color: #2563c7;
+  background: #edf5ff;
+}
+
+.role-card__icon--team {
+  color: #762acb;
+  background: #f4e8ff;
+}
+
+.role-card__copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.role-card__copy strong {
+  font-size: clamp(18px, 2vw, 25px);
+}
+
+.role-card__copy span {
+  color: #707988;
+  font-size: clamp(14px, 1.5vw, 19px);
+}
+
+.role-card__arrow {
+  margin-left: auto;
+  color: #cbd1d7;
+  flex: 0 0 auto;
+}
+
+.legal-copy {
+  margin-top: auto;
+  padding-top: 56px;
+  color: #73809a;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.legal-copy a {
+  color: #3068c8;
+  text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+  .landing-page {
+    padding: 22px 18px 25px;
+  }
+
+  .brand-block {
+    margin-bottom: 54px;
+  }
+
+  .brand-block h1 {
+    font-size: clamp(31px, 9vw, 44px);
+    white-space: nowrap;
+  }
+
+  .brand-block__tagline {
+    margin-top: 40px;
+    font-size: 21px;
+  }
+
+  .brand-block__subline {
+    font-size: 15px;
+  }
+
+  .role-list {
+    gap: 16px;
+  }
+
+  .role-card {
+    min-height: 135px;
+    padding: 18px 20px;
+    gap: 14px;
+    border-radius: 20px;
+  }
+
+  .role-card__icon {
+    width: 64px;
+    height: 64px;
+    flex-basis: 64px;
+  }
+
+  .role-card__copy {
+    gap: 7px;
+  }
+
+  .role-card__copy strong {
+    font-size: 19px;
+  }
+
+  .role-card__copy span {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .legal-copy {
+    padding-top: 48px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 370px) {
+  .brand-block h1 {
+    font-size: 28px;
+  }
+
+  .role-card__icon {
+    width: 56px;
+    height: 56px;
+    flex-basis: 56px;
+  }
+
+  .role-card {
+    padding-inline: 14px;
+  }
+
+  .role-card__copy strong {
+    font-size: 17px;
+  }
+
+  .role-card__copy span {
+    font-size: 12px;
+  }
+}

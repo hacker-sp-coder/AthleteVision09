@@ -1,0 +1,33 @@
+.profile-page { min-height: 100vh; padding: 32px 40px 110px 132px; color: #162033; background: #fff; }
+.profile-header { max-width: 1180px; margin: 0 auto 38px; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; }
+.profile-header h1 { text-align: center; font-size: 2.5rem; font-weight: 500; }
+.profile-back { display: grid; place-items: center; color: #162033; border: 0; background: transparent; cursor: pointer; }
+.profile-identity, .profile-section, .profile-logout, .profile-version { max-width: 980px; margin-right: auto; margin-left: auto; }
+.profile-identity { width: 100%; display: flex; align-items: center; gap: 22px; padding: 28px; border: 0; border-radius: 22px; background: #fff; box-shadow: 0 8px 27px rgba(29, 48, 84, .07); color: #162033; text-align: left; cursor: pointer; }
+.profile-avatar { width: 96px; height: 96px; display: grid; place-items: center; flex: 0 0 96px; color: #fff; border-radius: 50%; background: #2d64db; font-size: 2rem; font-weight: 700; }
+.profile-identity strong, .profile-identity small { display: block; }
+.profile-identity strong { font-size: 1.5rem; }
+.profile-identity small { margin-top: 6px; color: #68768c; font-size: 1.15rem; }
+.profile-chevron { margin-left: auto; color: #68768c; }
+.profile-section { margin-top: 38px; }
+.profile-section h2 { margin-bottom: 14px; color: #68768c; font-size: 1.05rem; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
+.profile-section__rows { border-top: 1px solid #d8dbe0; }
+.settings-row { width: 100%; min-height: 82px; display: flex; align-items: center; gap: 26px; padding: 18px 10px; color: #68768c; border: 0; border-bottom: 1px solid #d8dbe0; background: transparent; text-align: left; cursor: pointer; }
+.settings-row > span { flex: 1; }
+.settings-row strong, .settings-row small { display: block; color: #162033; }
+.settings-row strong { font-size: 1.2rem; font-weight: 500; }
+.settings-row small { margin-top: 4px; color: #68768c; font-size: .95rem; }
+.settings-row > svg:last-child { color: #68768c; }
+.settings-toggle-row > svg { flex: 0 0 auto; }
+.toggle { width: 104px; height: 56px; padding: 5px; border: 4px solid #858791; border-radius: 30px; background: #e5e5eb; cursor: pointer; }
+.toggle span { display: block; width: 38px; height: 38px; border-radius: 50%; background: #858791; transition: transform .2s ease; }
+.toggle.is-on { border-color: #2d64db; background: #2d64db; }
+.toggle.is-on span { background: #fff; transform: translateX(47px); }
+.profile-logout { display: flex; align-items: center; gap: 24px; margin-top: 45px; padding: 12px 10px; color: #e64c53; border: 0; background: transparent; font-size: 1.2rem; cursor: pointer; }
+.profile-version { margin-top: 40px; color: #68768c; text-align: center; font-size: 1rem; }
+.profile-nav { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; width: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 24px 10px; border-right: 1px solid #e4e9f1; background: #fff; box-shadow: 4px 0 18px rgba(32, 47, 77, .045); }
+.profile-nav button { display: grid; justify-items: center; gap: 7px; width: 72px; padding: 10px 4px; color: #6c7a8e; border: 0; border-radius: 13px; background: transparent; font-size: .7rem; cursor: pointer; }
+.profile-nav button span { font-size: 1.5rem; line-height: 1; }
+.profile-nav button.is-active { color: #2d64db; background: #edf3ff; }
+.profile-loading { min-height: 100vh; display: grid; place-items: center; color: #68768c; background: #f5f7fb; }
+@media (max-width: 700px) { .profile-page { padding: 24px 32px 100px; } .profile-header { margin-bottom: 32px; } .profile-header h1 { font-size: 2.35rem; } .profile-identity { padding: 26px 8px; } .profile-avatar { width: 82px; height: 82px; flex-basis: 82px; } .profile-identity strong { font-size: 1.25rem; } .profile-identity small { font-size: 1rem; } .profile-section { margin-top: 34px; } .settings-row { gap: 18px; padding-inline: 0; } .settings-row strong { font-size: 1.05rem; } .settings-row small { font-size: .9rem; } .toggle { width: 94px; height: 50px; } .toggle span { width: 34px; height: 34px; } .toggle.is-on span { transform: translateX(40px); } .profile-nav { top: auto; right: 0; bottom: 0; left: 0; width: auto; height: auto; flex-direction: row; justify-content: space-around; gap: 0; padding: 12px 20px 10px; border-top: 1px solid #edf0f4; border-right: 0; box-shadow: 0 -6px 20px rgba(32, 47, 77, .05); } .profile-nav button { width: auto; padding: 0; } }
