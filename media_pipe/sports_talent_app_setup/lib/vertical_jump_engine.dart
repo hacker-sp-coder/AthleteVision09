@@ -16,6 +16,13 @@ enum JumpInvalidReason {
   /// tracking was lost for too long during the confirmed airborne window,
   /// or no usable hip sample was ever collected during it.
   insufficientData,
+
+  /// The hip-to-ankle vertical span collapsed too far below the calibrated
+  /// standing span during the confirmed airborne window - evidence of a
+  /// deliberate leg tuck rather than natural knee flexion. Guards against
+  /// hip-based height being inflated by body-configuration change rather
+  /// than genuine vertical displacement.
+  legConfigurationChange,
 }
 
 class JumpAttemptResult {
@@ -206,6 +213,20 @@ class VerticalJumpEngine extends ExerciseEngine {
   /// never a factor in whether an attempt started.
   static const double _kHorizontalDriftToleranceFraction = 0.25;
 
+  /// How far the hip-to-ankle vertical span (see [_bodyScalePx]) may
+  /// collapse below its calibrated standing value, as a fraction of
+  /// [_bodyScalePx], during a confirmed airborne window before the attempt
+  /// is flagged [JumpInvalidReason.legConfigurationChange] instead of being
+  /// scored. A validity gate only - never consulted for takeoff/landing
+  /// events or the height formula itself.
+  ///
+  /// V1 PLACEHOLDER - not physically validated yet. Chosen conservatively
+  /// (comfortably above expected natural knee-flexion collapse, comfortably
+  /// below the collapse implied by the ~23-24cm vs ~59-60cm tuck-jump
+  /// exploit observed in testing) but must be tuned against real recordings
+  /// of natural jumps vs. deliberate tucks before being trusted.
+  static const double _kLegSpanCollapseToleranceFraction = 0.30;
+
   /// How much hip/ankle sway is tolerated around a freshly self-established
   /// re-arm anchor (see [_processAwaitingBaseline]) before it's considered
   /// still settling. This is a materially different concept from a
@@ -279,6 +300,7 @@ class VerticalJumpEngine extends ExerciseEngine {
   double _ankleLandingTolerancePx = 0;
   double _driftTolerancePx = 0;
   double _rearmMovementTolerancePx = 0;
+  double _legSpanCollapseTolerancePx = 0;
 
   // Takeoff evidence while READY - per-foot bounded windows, independent of
   // each other so a brief single-foot dropout doesn't corrupt the other's
@@ -291,6 +313,7 @@ class VerticalJumpEngine extends ExerciseEngine {
   DateTime? _takeoffTime;
   final List<double> _airborneHipYSamples = [];
   double _maxAbsHipXDriftPx = 0;
+  double _maxLegSpanCollapsePx = 0;
   int _consecutiveNotVisible = 0;
 
   // Landing evidence, tracked independently per foot: each foot gets its
@@ -406,6 +429,7 @@ class VerticalJumpEngine extends ExerciseEngine {
     _ankleLandingTolerancePx = 0;
     _driftTolerancePx = 0;
     _rearmMovementTolerancePx = 0;
+    _legSpanCollapseTolerancePx = 0;
     _rearmStableSince = null;
     _rearmReferenceHipY = null;
     _rearmReferenceLeftAnkleY = null;
@@ -422,6 +446,7 @@ class VerticalJumpEngine extends ExerciseEngine {
     _takeoffTime = null;
     _airborneHipYSamples.clear();
     _maxAbsHipXDriftPx = 0;
+    _maxLegSpanCollapsePx = 0;
     _leftLandingCandidateSince = null;
     _rightLandingCandidateSince = null;
     _leftSettled = false;
@@ -590,6 +615,7 @@ class VerticalJumpEngine extends ExerciseEngine {
     _ankleLandingTolerancePx = bodyScalePx * _kAnkleLandingToleranceFraction;
     _driftTolerancePx = bodyScalePx * _kHorizontalDriftToleranceFraction;
     _rearmMovementTolerancePx = bodyScalePx * _kRearmMovementToleranceFraction;
+    _legSpanCollapseTolerancePx = bodyScalePx * _kLegSpanCollapseToleranceFraction;
     // Calibration hands off fixed references and gets out of the way - it
     // never re-checks "is the athlete still standing like this" again.
     _state = _JumpState.ready;
@@ -678,6 +704,7 @@ class VerticalJumpEngine extends ExerciseEngine {
       _rightAnkle.reset();
       _airborneHipYSamples.clear();
       _maxAbsHipXDriftPx = 0;
+      _maxLegSpanCollapsePx = 0;
       _consecutiveNotVisible = 0;
       _resetDiagnostics();
     }
@@ -692,6 +719,7 @@ class VerticalJumpEngine extends ExerciseEngine {
     final hipX = pose != null ? averageHipX(pose) : null;
     final leftY = pose != null ? leftAnkleY(pose) : null;
     final rightY = pose != null ? rightAnkleY(pose) : null;
+    final avgAnkleY = pose != null ? averageAnkleY(pose) : null;
 
     // --- TEMPORARY DIAGNOSTIC INSTRUMENTATION ---
     // Read-only counters - does not influence any detection/measurement
@@ -735,6 +763,7 @@ class VerticalJumpEngine extends ExerciseEngine {
     // never duplicated or interpolated - it's simply absent this frame.
     if (hipY != null) _airborneHipYSamples.add(hipY);
     if (hipX != null) _trackDrift(hipX);
+    if (hipY != null && avgAnkleY != null) _trackLegConfiguration(hipY, avgAnkleY);
 
     // Each foot is evaluated independently against its own baseline and its
     // own debounce streak - the two feet are not required to be inside
@@ -853,6 +882,18 @@ class VerticalJumpEngine extends ExerciseEngine {
     if (drift > _maxAbsHipXDriftPx) _maxAbsHipXDriftPx = drift;
   }
 
+  /// Tracks how far the hip-to-ankle vertical span has collapsed below its
+  /// calibrated standing value ([_bodyScalePx]) at any point in the
+  /// confirmed airborne window - the signature of a deliberate leg tuck.
+  /// Mirrors [_trackDrift]'s running-max pattern; evaluated once at
+  /// [_finalizeAttempt], never influences takeoff/landing or the height
+  /// formula itself.
+  void _trackLegConfiguration(double hipY, double avgAnkleY) {
+    final legSpanPx = avgAnkleY - hipY;
+    final collapsePx = _bodyScalePx - legSpanPx;
+    if (collapsePx > _maxLegSpanCollapsePx) _maxLegSpanCollapsePx = collapsePx;
+  }
+
   /// Only ever called from [_JumpState.airborne] - by definition, a genuine
   /// airborne event has already happened, so this always consumes one of
   /// the three attempts. The only open question is whether it's valid.
@@ -879,6 +920,12 @@ class VerticalJumpEngine extends ExerciseEngine {
         attemptNumber: attemptNumber,
         isValid: false,
         invalidReason: JumpInvalidReason.excessiveDrift,
+      );
+    } else if (_maxLegSpanCollapsePx > _legSpanCollapseTolerancePx) {
+      result = JumpAttemptResult(
+        attemptNumber: attemptNumber,
+        isValid: false,
+        invalidReason: JumpInvalidReason.legConfigurationChange,
       );
     } else {
       // Retrospective apex: a locally-corroborated extreme (see
@@ -1035,6 +1082,7 @@ class VerticalJumpEngine extends ExerciseEngine {
   String _reasonLabel(JumpInvalidReason reason) => switch (reason) {
     JumpInvalidReason.excessiveDrift => 'excessive horizontal drift',
     JumpInvalidReason.insufficientData => 'insufficient tracking data',
+    JumpInvalidReason.legConfigurationChange => 'excessive leg configuration change (tucking)',
   };
 
   String? _lastAttemptLine() {
