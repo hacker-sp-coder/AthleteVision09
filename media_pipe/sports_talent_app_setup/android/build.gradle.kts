@@ -34,6 +34,30 @@ subprojects {
     }
 }
 
+// Workaround: tflite_flutter's Android module doesn't pin a JVM toolchain,
+// so its Kotlin compile task inherits whatever JDK invoked Gradle while its
+// Java compile task defaults to an older target, which Gradle 9's stricter
+// validation rejects outright ("Inconsistent JVM Target Compatibility").
+// Force both to the same target (17) already used by the app module.
+subprojects {
+    if (name == "tflite_flutter") {
+        // afterEvaluate so this runs after tflite_flutter's own build.gradle
+        // has already set (and would otherwise win with) its own
+        // compileOptions.
+        afterEvaluate {
+            extensions.configure<com.android.build.gradle.LibraryExtension> {
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
+            }
+        }
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

@@ -469,6 +469,29 @@ class AngleCycleEngine extends ExerciseEngine {
     }
   }
 
+  // --- Read-only accessors for lib/audio/exercise_voice_coach.dart -----
+  // Expose already-computed state for voice coaching; no effect on any
+  // calculation/detection/scoring above.
+
+  /// Whether calibration has completed and rep tracking is active.
+  bool get isCalibrated => _calibrated;
+
+  /// Officially confirmed rep count (same number the status text shows).
+  int get repCount => _repCount;
+
+  /// Whether the attempt has been terminated (3 confirmed form
+  /// violations).
+  bool get isTerminated => _terminated;
+
+  /// Whether a confirmed form-violation warning is currently active (mirrors
+  /// the "FORM WARNING" status text condition exactly).
+  bool get hasActiveFormWarning => _violationConfirmedThisEpisode && _warningCount > 0;
+
+  /// The specific form-check failure reason backing the current warning
+  /// (e.g. "Keep your arms straight..."), independent of the generic
+  /// "FORM WARNING X/2" status text.
+  String get formReason => _formReason;
+
   String get _phaseLabel {
     switch (_phase) {
       case _CyclePhase.top:

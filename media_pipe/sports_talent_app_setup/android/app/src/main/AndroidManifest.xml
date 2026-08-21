@@ -44,5 +44,11 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Required by flutter_tts (voice coaching) to find the
+             on-device TTS engine on Android 11+, see:
+             https://developer.android.com/training/package-visibility -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
     </queries>
 </manifest>

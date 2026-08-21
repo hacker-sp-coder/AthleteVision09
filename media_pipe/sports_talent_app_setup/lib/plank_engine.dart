@@ -273,6 +273,29 @@ class PlankEngine extends ExerciseEngine {
     }
   }
 
+  // --- Read-only accessors for lib/audio/exercise_voice_coach.dart -----
+  // Expose already-computed state for voice coaching; no effect on any
+  // calculation/detection/scoring above.
+
+  /// Whether the successful hold is currently active (calibration done,
+  /// not yet ended).
+  bool get isHolding => _state == _PlankState.holding;
+
+  /// Whether the hold ended due to a confirmed, sustained form violation.
+  bool get isEnded => _state == _PlankState.ended;
+
+  /// Accumulated valid hold duration (the same value the status text
+  /// formats and shows).
+  Duration get holdDuration => _totalValidDuration;
+
+  /// The current form-check failure reason while holding, or '' when form
+  /// is currently valid (mirrors `_holdReason` exactly).
+  String get holdReason => _holdReason;
+
+  /// Whether a form warning is currently active (holding, with a live
+  /// uncertain/invalid reason not yet resolved into a confirmed end).
+  bool get hasActiveFormWarning => _state == _PlankState.holding && _holdReason.isNotEmpty;
+
   String _formatDuration(Duration d) => '${(d.inMilliseconds / 1000).toStringAsFixed(1)}s';
 
   @override

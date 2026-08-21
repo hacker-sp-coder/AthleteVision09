@@ -382,6 +382,17 @@ class VerticalJumpEngine extends ExerciseEngine {
 
   List<JumpAttemptResult> get attempts => List.unmodifiable(_attempts);
 
+  // --- Read-only accessors for lib/audio/exercise_voice_coach.dart -----
+  // Expose already-computed state for voice coaching; no effect on any
+  // calculation/detection/scoring above.
+
+  /// Whether the athlete is calibrated and the engine is currently waiting
+  /// for the next jump (the "Ready - Jump N/kMaxAttempts" status).
+  bool get isReadyToJump => _state == _JumpState.ready;
+
+  /// Whether all attempts are done and the test has naturally completed.
+  bool get isTestComplete => _state == _JumpState.testComplete;
+
   double? get bestValidHeightCm {
     double? best;
     for (final attempt in _attempts) {
