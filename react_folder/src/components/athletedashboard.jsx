@@ -127,7 +127,7 @@ const AthleteDashboard = () => {
         <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search coaches, sports..." />
       </label>
 
-      <section className="discovery-section">
+      <section className="discovery-section dashboard-order-camps">
         <div className="discovery-section__heading"><h2>Online Camps</h2><button type="button">See all</button></div>
         <div className="camp-scroller">
           {DUMMY_CAMPS.filter((camp) => !searchQuery || `${camp.title} ${camp.coach} ${camp.sport}`.toLowerCase().includes(searchQuery.toLowerCase())).map((camp) => (
@@ -140,7 +140,7 @@ const AthleteDashboard = () => {
       </section>
 
       {/* Main Stats Grid */}
-      <section className="snapshot-section">
+      <section className="snapshot-section dashboard-order-snapshot">
         <div className="snapshot-section__heading">
           <h2>Your Performance Snapshot</h2>
           <span>Based on your athlete profile</span>

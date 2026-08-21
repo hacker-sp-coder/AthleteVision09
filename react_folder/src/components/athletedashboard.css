@@ -8,6 +8,8 @@
   margin: 0;
   padding: 28px 40px 110px 132px;
   background: #f5f7fb;
+  display: flex;
+  flex-direction: column;
 }
 
 .athlete-dashboard__header {
@@ -65,6 +67,8 @@
 .camp-card__body span { display: inline-block; padding: 5px 11px; color: var(--athlete-blue); border-radius: 9px; background: #edf2ff; font-size: .8rem; font-weight: 700; }
 
 .snapshot-section { margin-top: 42px; }
+.dashboard-order-snapshot { order: 3; }
+.dashboard-order-camps { order: 4; }
 .snapshot-section__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .snapshot-section__heading h2 { color: #162033; font-size: 1.5rem; font-weight: 800; }
 .snapshot-section__heading span { color: #68768c; font-size: .86rem; }
@@ -75,6 +79,7 @@
 .snapshot-section > .grid > div p.text-slate-500 { color: #68768c; }
 .snapshot-section > .grid > div strong { color: #162033; }
 .coach-section { border-color: var(--athlete-line); border-radius: 18px; box-shadow: 0 7px 20px rgba(30, 48, 83, .055); }
+.athlete-dashboard > .coach-section { order: 5; }
 .coach-section article { border-radius: 16px; background: #fff; box-shadow: 0 5px 15px rgba(30, 48, 83, .05); }
 .coach-section .text-blue-600 { color: var(--athlete-blue); }
 
