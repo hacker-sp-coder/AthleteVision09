@@ -137,18 +137,28 @@ class SideOrientationCheck extends FormCheck {
 /// person can have a perfectly straight, fully side-on shoulder-hip-ankle
 /// line that's still vertical, which this check exists to reject. Fixed
 /// threshold in both calibration and continuous tracking (not
-/// reference-relative) - a Push-up should stay roughly horizontal
-/// throughout the whole rep, not just at calibration.
+/// reference-relative) - used both to require a Push-up plank stay roughly
+/// horizontal throughout the whole rep, and (with shoulder->hip landmarks)
+/// as Controlled Crunch's posture gate, rejecting a standing torso in favor
+/// of a genuine supine starting position, before calibration is allowed to
+/// begin or continue.
 class BodyInclinationCheck extends FormCheck {
   const BodyInclinationCheck({
     this.from = BodyPoint.shoulder,
     this.to = BodyPoint.ankle,
     this.maxInclinationFromHorizontalDeg = 40,
+    this.invalidReason = 'Get into a horizontal push-up plank position',
   });
 
   final BodyPoint from;
   final BodyPoint to;
   final double maxInclinationFromHorizontalDeg;
+
+  /// Message shown when the line's inclination exceeds
+  /// [maxInclinationFromHorizontalDeg]. Configurable per use (e.g. a
+  /// Push-up plank vs. a Controlled Crunch supine posture) since the same
+  /// geometric violation means something different for each exercise.
+  final String invalidReason;
 
   @override
   String get name => 'body_inclination';
@@ -174,10 +184,7 @@ class BodyInclinationCheck extends FormCheck {
       return const FormCheckResult(CheckStatus.uncertain, 'Body line not visible');
     }
     if (inclination > maxInclinationFromHorizontalDeg) {
-      return const FormCheckResult(
-        CheckStatus.invalid,
-        'Get into a horizontal push-up plank position',
-      );
+      return FormCheckResult(CheckStatus.invalid, invalidReason);
     }
     return FormCheckResult.ok;
   }
@@ -387,11 +394,19 @@ class CalibrationAngleGateCheck extends FormCheck {
   }
 }
 
-/// Knee-extension check (hip-knee-ankle angle). Catches an athlete dropping
-/// to their knees and leaning forward, which the other checks don't rule
-/// out on their own: that pose can still read as side-on, horizontal, and
-/// have a straight shoulder-hip-ankle line. Same absolute-floor +
-/// reference-tolerance pattern as [BodyRigidityCheck].
+/// Limb-extension check: "must stay extended" for any three-landmark joint
+/// (hip-knee-ankle for a leg, shoulder-elbow-wrist for an arm), same
+/// absolute-floor + reference-tolerance pattern as [BodyRigidityCheck].
+/// Originally written for the knee (catches an athlete dropping to their
+/// knees and leaning forward, which the other checks don't rule out on
+/// their own - that pose can still read as side-on, horizontal, and have a
+/// straight shoulder-hip-ankle line), and later reused unchanged for the
+/// arm (a plank's straight-arm support requirement is the identical
+/// geometric question). [key]/[checkName]/[notVisibleReason]/
+/// [invalidReason] are configurable so two independent instances - one for
+/// legs, one for arms - can coexist in the same exercise's formChecks list
+/// without colliding on the same calibrated reference value; every default
+/// matches this class's original knee-only behavior exactly.
 class LegExtensionCheck extends FormCheck {
   const LegExtensionCheck({
     this.a = BodyPoint.hip,
@@ -399,6 +414,10 @@ class LegExtensionCheck extends FormCheck {
     this.c = BodyPoint.ankle,
     this.absoluteMinDeg = 150,
     this.toleranceDeg = 20,
+    this.key = 'legExtensionAngleDeg',
+    this.checkName = 'leg_extension',
+    this.notVisibleReason = 'Legs not visible',
+    this.invalidReason = 'Keep your legs straight - do not drop to your knees',
   });
 
   final BodyPoint a;
@@ -406,12 +425,16 @@ class LegExtensionCheck extends FormCheck {
   final BodyPoint c;
   final double absoluteMinDeg;
   final double toleranceDeg;
+  final String key;
+  final String checkName;
+  final String notVisibleReason;
+  final String invalidReason;
 
   @override
-  String get name => 'leg_extension';
+  String get name => checkName;
 
   @override
-  String? get referenceKey => 'legExtensionAngleDeg';
+  String? get referenceKey => key;
 
   double? _angle(FormCheckContext context) {
     final sided = context.sidedPose;
@@ -430,7 +453,7 @@ class LegExtensionCheck extends FormCheck {
   FormCheckResult evaluate(FormCheckContext context) {
     final angle = _angle(context);
     if (angle == null) {
-      return const FormCheckResult(CheckStatus.uncertain, 'Legs not visible');
+      return FormCheckResult(CheckStatus.uncertain, notVisibleReason);
     }
 
     final reference = context.reference?.get(referenceKey!);
@@ -439,10 +462,7 @@ class LegExtensionCheck extends FormCheck {
         : angle < absoluteMinDeg;
 
     if (broken) {
-      return const FormCheckResult(
-        CheckStatus.invalid,
-        'Keep your legs straight - do not drop to your knees',
-      );
+      return FormCheckResult(CheckStatus.invalid, invalidReason);
     }
     return FormCheckResult.ok;
   }
@@ -478,6 +498,53 @@ class VerticalBaselineReferenceCheck extends FormCheck {
   @override
   FormCheckResult evaluate(FormCheckContext context) {
     if (sampler(context.pose) == null) {
+      return const FormCheckResult(CheckStatus.uncertain, 'Move into frame');
+    }
+    return FormCheckResult.ok;
+  }
+}
+
+/// Captures an athlete-specific baseline for a joint angle during
+/// calibration, purely as a reference value - imposes no pass/fail
+/// constraint beyond landmark visibility, same as
+/// [VerticalBaselineReferenceCheck]. Exists for exercises (e.g. Controlled
+/// Crunch) whose rep-cycle thresholds are defined as a relative change from
+/// the athlete's own calibrated starting angle rather than a fixed
+/// universal constant - see [ExerciseConfig.targetRomDeg].
+class AngleBaselineReferenceCheck extends FormCheck {
+  const AngleBaselineReferenceCheck({
+    required this.landmarks,
+    required this.key,
+    this.checkName = 'angle_baseline_reference',
+  });
+
+  final (BodyPoint, BodyPoint, BodyPoint) landmarks;
+  final String key;
+  final String checkName;
+
+  @override
+  String get name => checkName;
+
+  @override
+  String? get referenceKey => key;
+
+  double? _angle(FormCheckContext context) {
+    final sided = context.sidedPose;
+    if (sided == null) return null;
+    final (a, b, c) = landmarks;
+    final pa = sided[a];
+    final pb = sided[b];
+    final pc = sided[c];
+    if (pa == null || pb == null || pc == null) return null;
+    return angleBetweenPoints(pa, pb, pc);
+  }
+
+  @override
+  double? sampleValue(FormCheckContext context) => _angle(context);
+
+  @override
+  FormCheckResult evaluate(FormCheckContext context) {
+    if (_angle(context) == null) {
       return const FormCheckResult(CheckStatus.uncertain, 'Move into frame');
     }
     return FormCheckResult.ok;
