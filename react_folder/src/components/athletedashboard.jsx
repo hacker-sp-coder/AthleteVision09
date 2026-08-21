@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase/config';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { AlertTriangle, Bell, Compass, Dumbbell, MessageSquare, Radio, Search, UserRound } from 'lucide-react';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { AlertTriangle, Bell, CalendarDays, Compass, Dumbbell, MessageSquare, Radio, Search, UserRound } from 'lucide-react';
 import athleteVisionLogo from '../assets/athletevision-logo.svg';
 import './athletedashboard.css';
 
@@ -24,6 +24,8 @@ const AthleteDashboard = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  // Live test deadlines from Firestore
+  const [liveDeadlines, setLiveDeadlines] = useState([]);
 
   // Dynamic state for logged in athlete
   const [athlete, setAthlete] = useState({
@@ -89,6 +91,35 @@ const AthleteDashboard = () => {
     return () => unsubscribe();
   }, [navigate]);
 
+  // Real-time subscription to published tests + deadlines
+  useEffect(() => {
+    const unsubDeadlines = onSnapshot(
+      doc(db, 'assessmentConfig', 'current'),
+      (snapshot) => {
+        const tests = snapshot.data()?.activeTests || [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Keep only tests that have a deadline set and deadline is today or future
+        const upcoming = tests
+          .filter((t) => t.deadline)
+          .map((t) => ({
+            ...t,
+            deadlineDate: new Date(t.deadline + 'T00:00:00'),
+          }))
+          .filter((t) => t.deadlineDate >= today)
+          .sort((a, b) => a.deadlineDate - b.deadlineDate);
+
+        setLiveDeadlines(upcoming);
+      },
+      (err) => {
+        console.error('Deadline subscription error:', err);
+      }
+    );
+
+    return () => unsubDeadlines();
+  }, []);
+
   const handleLogout = async () => {
     await signOut(auth);
     navigate('/login');
@@ -118,8 +149,41 @@ const AthleteDashboard = () => {
       </div>
 
       <section className="deadline-card">
-        <div className="deadline-card__heading"><AlertTriangle size={25} /><div><h2>Upcoming Test Deadlines</h2><p>Important tests due soon</p></div></div>
-        <div className="deadline-card__rows"><span>Push-ups</span><strong>Due tomorrow</strong><span>Wall Sit</span><span>Due Mon, Aug 24</span></div>
+        <div className="deadline-card__heading">
+          <AlertTriangle size={25} />
+          <div>
+            <h2>Upcoming Test Deadlines</h2>
+            <p>{liveDeadlines.length > 0 ? `${liveDeadlines.length} test${liveDeadlines.length > 1 ? 's' : ''} due soon` : 'No upcoming deadlines'}</p>
+          </div>
+        </div>
+        {liveDeadlines.length > 0 ? (
+          <div className="deadline-card__rows">
+            {liveDeadlines.map((test) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const diff = Math.round((test.deadlineDate - today) / (1000 * 60 * 60 * 24));
+              let dueLabel;
+              if (diff === 0) dueLabel = 'Due today';
+              else if (diff === 1) dueLabel = 'Due tomorrow';
+              else dueLabel = `Due ${test.deadlineDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`;
+              const isUrgent = diff <= 2;
+              return (
+                <React.Fragment key={test.id}>
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays size={14} className="opacity-60" />
+                    {test.name}
+                  </span>
+                  <strong style={{ color: isUrgent ? '#dc2626' : undefined }}>{dueLabel}</strong>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="deadline-card__empty">
+            <CalendarDays size={20} className="opacity-40" />
+            <span>No tests scheduled yet. Check back soon.</span>
+          </div>
+        )}
       </section>
 
       <label className="athlete-search">

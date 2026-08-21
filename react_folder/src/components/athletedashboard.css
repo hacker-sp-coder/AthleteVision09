@@ -49,6 +49,8 @@
 .deadline-card__rows { display: grid; grid-template-columns: 1fr auto; gap: 10px 24px; margin-top: 24px; color: var(--athlete-ink); font-size: 1.05rem; }
 .deadline-card__rows strong { color: #e64c53; font-weight: 700; }
 .deadline-card__rows span:nth-child(4) { color: var(--athlete-muted); }
+.deadline-card__empty { display: flex; align-items: center; gap: 10px; margin-top: 20px; color: var(--athlete-muted); font-size: 0.95rem; font-weight: 500; }
+
 
 .athlete-search { display: flex; align-items: center; gap: 15px; padding: 17px 24px; color: #60718b; border-radius: 18px; background: #f2f3f6; }
 .athlete-search input { width: 100%; color: var(--athlete-ink); border: 0; outline: 0; background: transparent; font-size: 1.05rem; }
