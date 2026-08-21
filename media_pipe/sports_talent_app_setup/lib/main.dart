@@ -55,6 +55,31 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  void _startControlledCrunch(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            const LiveTestScreen(exerciseType: ExerciseType.controlledCrunch),
+      ),
+    );
+  }
+
+  void _startWallSit(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const LiveTestScreen(exerciseType: ExerciseType.wallSit),
+      ),
+    );
+  }
+
+  void _startPlank(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const LiveTestScreen(exerciseType: ExerciseType.plank),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -86,6 +111,24 @@ class HomeScreen extends StatelessWidget {
                 icon: const Icon(Icons.accessibility_new),
                 label: const Text('Squats'),
                 onPressed: () => _startSquat(context),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.self_improvement),
+                label: const Text('Controlled Crunch'),
+                onPressed: () => _startControlledCrunch(context),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.timer_outlined),
+                label: const Text('Wall-Sit Hold'),
+                onPressed: () => _startWallSit(context),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.horizontal_rule),
+                label: const Text('Straight-Arm Plank'),
+                onPressed: () => _startPlank(context),
               ),
             ],
           ),

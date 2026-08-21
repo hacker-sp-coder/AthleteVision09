@@ -64,6 +64,13 @@ class AngleCycleEngine extends ExerciseEngine {
   String _formReason = '';
   bool _isBodyVisible = false;
 
+  /// Advisory-only note (e.g. excessive ROM) shown alongside the form
+  /// status. Distinct from [_formReason]/[_formStatus]: never gates rep
+  /// counting or the warning/termination lifecycle. Null when no config
+  /// declares [ExerciseConfig.excessiveRomDeg] or the signal isn't
+  /// currently triggered.
+  String? _formAdvisory;
+
   // Test-attempt lifecycle: separate from FormCheck verdicts above. Tracks
   // how long a definite INVALID status has persisted, independent of the
   // frame-by-frame VALID/INVALID/UNCERTAIN judgment itself.
@@ -90,6 +97,7 @@ class AngleCycleEngine extends ExerciseEngine {
     _consecutiveUncertain = 0;
     _formStatus = CheckStatus.uncertain;
     _formReason = '';
+    _formAdvisory = null;
     _isBodyVisible = false;
     _invalidSince = null;
     _violationConfirmedThisEpisode = false;
@@ -114,6 +122,26 @@ class AngleCycleEngine extends ExerciseEngine {
     final pc = sided[c];
     if (pa == null || pb == null || pc == null) return null;
     return angleBetweenPoints(pa, pb, pc);
+  }
+
+  /// TOP threshold for this attempt: [ExerciseConfig.topAngleThresholdDeg]
+  /// if fixed, otherwise the athlete's own calibrated baseline stored under
+  /// [ExerciseConfig.topAngleReferenceKey]. Null only if calibration hasn't
+  /// produced that reference value yet - shouldn't happen once
+  /// [_calibrated] is true given [ExerciseConfig]'s constructor assertion.
+  double? get _topThreshold =>
+      config.topAngleThresholdDeg ??
+      (config.topAngleReferenceKey != null ? _reference?.get(config.topAngleReferenceKey!) : null);
+
+  /// BOTTOM threshold for this attempt: [ExerciseConfig.bottomAngleThresholdDeg]
+  /// if fixed, otherwise [_topThreshold] minus [ExerciseConfig.targetRomDeg].
+  double? get _bottomThreshold {
+    final fixed = config.bottomAngleThresholdDeg;
+    if (fixed != null) return fixed;
+    final top = _topThreshold;
+    final rom = config.targetRomDeg;
+    if (top == null || rom == null) return null;
+    return top - rom;
   }
 
   ExerciseReference _buildReference(List<FormCheckContext> samples) {
@@ -231,6 +259,29 @@ class AngleCycleEngine extends ExerciseEngine {
     // reaching bottomAngleThresholdDeg during a fast rep even though the
     // real joint angle did.
     _registerCheckResult(result, movementAngle: rawAngle);
+    _updateFormAdvisory(rawAngle);
+  }
+
+  /// Advisory-only companion to [_advancePhase]: never gates rep counting
+  /// or the warning/termination lifecycle, purely surfaces
+  /// [ExerciseConfig.excessiveRomMessage] in status text when the movement
+  /// signal has drifted further from the TOP baseline than
+  /// [ExerciseConfig.excessiveRomDeg] (e.g. a Controlled Crunch drifting
+  /// toward a full sit-up). No-op for exercises that don't configure it.
+  void _updateFormAdvisory(double? angle) {
+    final excessiveRom = config.excessiveRomDeg;
+    final message = config.excessiveRomMessage;
+    if (excessiveRom == null || message == null) return;
+
+    if (_phase == _CyclePhase.top) {
+      _formAdvisory = null;
+      return;
+    }
+
+    final top = _topThreshold;
+    if (angle == null || top == null) return;
+
+    if (top - angle > excessiveRom) _formAdvisory = message;
   }
 
   void _registerCheckResult(FormCheckResult result, {double? movementAngle}) {
@@ -308,9 +359,18 @@ class AngleCycleEngine extends ExerciseEngine {
   }
 
   void _advancePhase(double angle) {
+    // Once calibrated, both resolve to real values for every exercise
+    // config (either fixed, or the calibrated baseline +/- targetRomDeg -
+    // see ExerciseConfig's constructor assertion). Bail defensively rather
+    // than crash on the always-unexpected case where a reference value
+    // hasn't materialized yet.
+    final top = _topThreshold;
+    final bottom = _bottomThreshold;
+    if (top == null || bottom == null) return;
+
     switch (_phase) {
       case _CyclePhase.top:
-        if (angle < config.topAngleThresholdDeg) {
+        if (angle < top) {
           _phase = _CyclePhase.descending;
           _descentMinAngle = angle;
         }
@@ -318,7 +378,7 @@ class AngleCycleEngine extends ExerciseEngine {
         final currentMin = _descentMinAngle;
         _descentMinAngle = currentMin == null || angle < currentMin ? angle : currentMin;
 
-        if (angle >= config.topAngleThresholdDeg) {
+        if (angle >= top) {
           // Recovered all the way back to top without ever reversing out of
           // a sufficient bottom - aborted, no rep.
           _phase = _CyclePhase.top;
@@ -328,7 +388,7 @@ class AngleCycleEngine extends ExerciseEngine {
           // reached during this descent - a genuine reversal, not sensor
           // noise. Judge depth from the tracked minimum, not this frame's
           // instantaneous value.
-          if (_descentMinAngle! <= config.bottomAngleThresholdDeg) {
+          if (_descentMinAngle! <= bottom) {
             _confirmBottom(angle);
           } else {
             // Insufficient depth - don't count a rep. Keep watching for
@@ -337,11 +397,11 @@ class AngleCycleEngine extends ExerciseEngine {
           }
         }
       case _CyclePhase.bottom:
-        if (angle > config.bottomAngleThresholdDeg) {
+        if (angle > bottom) {
           _phase = _CyclePhase.ascending;
         }
       case _CyclePhase.ascending:
-        if (angle >= config.topAngleThresholdDeg) {
+        if (angle >= top) {
           final now = DateTime.now();
           if (_lastRepTime == null || now.difference(_lastRepTime!) >= config.minRepInterval) {
             _repCount++;
@@ -349,7 +409,7 @@ class AngleCycleEngine extends ExerciseEngine {
           }
           _phase = _CyclePhase.top;
           _descentMinAngle = null;
-        } else if (angle <= config.bottomAngleThresholdDeg) {
+        } else if (angle <= bottom) {
           _phase = _CyclePhase.bottom; // Slipped back down before completing.
         }
     }
@@ -461,9 +521,10 @@ class AngleCycleEngine extends ExerciseEngine {
 
     final formLabel = _formStatus.name.toUpperCase();
     final formText = _formReason.isEmpty ? formLabel : '$formLabel - $_formReason';
+    final advisoryText = _formAdvisory != null ? '   •   $_formAdvisory' : '';
     return ExerciseStatus(
       primaryText: 'Reps: $_repCount',
-      secondaryText: 'Form: $formText   •   Phase: $_phaseLabel',
+      secondaryText: 'Form: $formText   •   Phase: $_phaseLabel$advisoryText',
       isBodyVisible: true,
     );
   }

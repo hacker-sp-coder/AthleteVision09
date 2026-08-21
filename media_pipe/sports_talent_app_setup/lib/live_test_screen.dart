@@ -8,8 +8,10 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'angle_cycle_engine.dart';
 import 'exercise_config.dart';
 import 'exercise_engine.dart';
+import 'plank_engine.dart';
 import 'pose_painter.dart';
 import 'vertical_jump_engine.dart';
+import 'wall_sit_engine.dart';
 
 class LiveTestScreen extends StatefulWidget {
   const LiveTestScreen({
@@ -77,6 +79,10 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
       ExerciseType.verticalJump => VerticalJumpEngine(userHeightCm: widget.userHeightCm!),
       ExerciseType.pushUp => AngleCycleEngine(config: pushUpExerciseConfig),
       ExerciseType.squat => AngleCycleEngine(config: squatExerciseConfig),
+      ExerciseType.controlledCrunch =>
+        AngleCycleEngine(config: controlledCrunchExerciseConfig),
+      ExerciseType.wallSit => WallSitEngine(),
+      ExerciseType.plank => PlankEngine(),
     };
     _poseDetector = PoseDetector(
       options: PoseDetectorOptions(
@@ -257,6 +263,9 @@ class _LiveTestScreenState extends State<LiveTestScreen> {
     ExerciseType.verticalJump => 'Standing Vertical Jump',
     ExerciseType.pushUp => 'Push-ups',
     ExerciseType.squat => 'Squats',
+    ExerciseType.controlledCrunch => 'Controlled Crunch',
+    ExerciseType.wallSit => 'Wall-Sit Hold',
+    ExerciseType.plank => 'Straight-Arm Plank',
   };
 
   @override
