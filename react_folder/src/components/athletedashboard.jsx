@@ -1,121 +1,244 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { auth, db } from '../firebase/config';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { AlertTriangle, Bell, Compass, Dumbbell, MessageSquare, Radio, Search, UserRound } from 'lucide-react';
+import athleteVisionLogo from '../assets/athletevision-logo.svg';
+import './athletedashboard.css';
+
+const DUMMY_COACHES = [
+  { name: 'Neha Kulkarni', sports: ['Volleyball', 'Basketball'], specialty: 'Jump technique and court movement', location: 'Pune, Maharashtra', experience: '8 years', availability: 'Available this week' },
+  { name: 'Arjun Mehta', sports: ['Football', 'Basketball'], specialty: 'Speed, agility and endurance', location: 'Mumbai, Maharashtra', experience: '10 years', availability: 'Available next week' },
+  { name: 'Kavya Reddy', sports: ['Athletics', 'Long Jump'], specialty: 'Explosive power and landing form', location: 'Bengaluru, Karnataka', experience: '7 years', availability: 'Available this week' },
+  { name: 'Rahul Deshmukh', sports: ['Volleyball', 'Athletics'], specialty: 'Strength and conditioning', location: 'Nashik, Maharashtra', experience: '12 years', availability: 'Available this month' }
+];
+
+const DUMMY_CAMPS = [
+  { title: 'High Jump Masterclass', coach: 'Coach Smith', sport: 'Athletics' },
+  { title: 'Sprint Mechanics', coach: 'Coach Johnson', sport: 'Athletics' },
+  { title: 'Volleyball Power Lab', coach: 'Coach Neha', sport: 'Volleyball' }
+];
 
 const AthleteDashboard = () => {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const athlete = {
-    name: "Mith Pawar",
-    athleteId: "ATH-2026-8802",
-    age: 19,
+  // Dynamic state for logged in athlete
+  const [athlete, setAthlete] = useState({
+    name: "Athlete",
+    athleteId: "ATH-2026-0000",
+    age: 0,
     gender: "Male",
     sport: "Volleyball",
     state: "Maharashtra",
-    district: "Mumbai North",
-    heightCm: 182,
-    weightKg: 74,
+    district: "Mumbai",
+    heightCm: 175,
+    weightKg: 68,
     rank: "#12",
     track: "Track B (Specialist Outlier)",
-    kisceStatus: "Selected - Balewadi, Pune",
+    kisceStatus: "Selected - KISCE Facility",
     metrics: {
-      verticalJump: "68 cm",
-      horizontalJump: "245 cm",
-      pushups: "45 reps",
-      squats: "52 reps",
-      crunches: "40 reps"
+      verticalJump: 68,
+      horizontalJump: 245,
+      pushups: 45,
+      wallSit: 95
     }
+  });
+
+  useEffect(() => {
+    // Listen for Auth State changes
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // Fetch user document from Firestore
+          const userDocRef = doc(db, "users", user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setAthlete(prev => ({
+              ...prev,
+              name: userData.name || user.displayName || "Athlete",
+              athleteId: `ATH-2026-${user.uid.slice(0, 4).toUpperCase()}`,
+              sport: userData.primarySport || "Volleyball",
+              state: userData.state || "Maharashtra",
+              district: userData.district || "Mumbai",
+              heightCm: userData.heightCm || 175,
+              weightKg: userData.weightKg || 68,
+            }));
+          } else {
+            // Fallback for direct auth without firestore doc
+            setAthlete(prev => ({
+              ...prev,
+              name: user.displayName || user.email.split('@')[0],
+              athleteId: `ATH-2026-${user.uid.slice(0, 4).toUpperCase()}`
+            }));
+          }
+        } catch (err) {
+          console.error("Error fetching user profile:", err);
+        }
+      } else {
+        // If not logged in, redirect to login
+        navigate('/login');
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [navigate]);
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    navigate('/login');
   };
 
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center font-sans">
+        <div className="text-slate-500 text-sm font-medium animate-pulse">Loading Profile...</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#050505] text-white p-6 font-sans">
+    <div className="athlete-dashboard min-h-screen bg-slate-50 text-slate-900 p-6 font-sans">
       {/* Top Header */}
-      <div className="flex justify-between items-center mb-8 border-b border-zinc-800 pb-5">
+      <div className="athlete-dashboard__header flex justify-between items-center mb-8 border-b border-slate-200 pb-5">
         <div>
-          <span className="bg-zinc-800 text-zinc-400 px-3 py-1 rounded-full text-xs uppercase font-semibold tracking-wider">
-            Athlete Performance Portal
-          </span>
-          <h1 className="text-2xl font-bold mt-2">Welcome back, {athlete.name}</h1>
-          <p className="text-zinc-500 text-xs mt-1">ID: {athlete.athleteId} • Target Sport: {athlete.sport} ({athlete.state})</p>
+          <h1 className="athlete-dashboard__greeting">Welcome back, {athlete.name}!</h1>
+          <p className="athlete-dashboard__subgreeting">Ready to play?</p>
         </div>
-        <button 
-          onClick={() => navigate('/login')} 
-          className="bg-zinc-900 hover:bg-zinc-800 text-rose-400 border border-zinc-800 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
-        >
-          Logout
-        </button>
+        <div className="athlete-dashboard__actions">
+          <button type="button" className="athlete-icon-button" aria-label="Notifications"><Bell size={25} /></button>
+          <button type="button" onClick={handleLogout} className="athlete-logout">Logout</button>
+        </div>
       </div>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <section className="deadline-card">
+        <div className="deadline-card__heading"><AlertTriangle size={25} /><div><h2>Upcoming Test Deadlines</h2><p>Important tests due soon</p></div></div>
+        <div className="deadline-card__rows"><span>Push-ups</span><strong>Due tomorrow</strong><span>Wall Sit</span><span>Due Mon, Aug 24</span></div>
+      </section>
+
+      <label className="athlete-search">
+        <Search size={25} />
+        <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search coaches, sports..." />
+      </label>
+
+      <section className="discovery-section dashboard-order-camps">
+        <div className="discovery-section__heading"><h2>Online Camps</h2><button type="button">See all</button></div>
+        <div className="camp-scroller">
+          {DUMMY_CAMPS.filter((camp) => !searchQuery || `${camp.title} ${camp.coach} ${camp.sport}`.toLowerCase().includes(searchQuery.toLowerCase())).map((camp) => (
+            <article className="camp-card" key={camp.title}>
+              <div className="camp-card__image"><Dumbbell size={43} /></div>
+              <div className="camp-card__body"><h3>{camp.title}</h3><p>{camp.coach}</p><span>{camp.sport}</span></div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {/* Main Stats Grid */}
+      <section className="snapshot-section dashboard-order-snapshot">
+        <div className="snapshot-section__heading">
+          <h2>Your Performance Snapshot</h2>
+          <span>Based on your athlete profile</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
         {/* Selection Status */}
-        <div className="bg-[#0d0d0d] border border-zinc-800 rounded-xl p-5">
-          <span className="text-zinc-400 text-xs uppercase font-semibold tracking-wider block mb-3">National Selection Status</span>
-          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-lg font-bold text-sm mb-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <span className="text-slate-500 text-xs uppercase font-bold tracking-wider block mb-3">National Selection Status</span>
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 p-3 rounded-lg font-bold text-sm mb-4">
             ✓ {athlete.track}
           </div>
-          <p className="text-xs text-zinc-500">Assigned KISCE Facility:</p>
-          <p className="font-semibold text-sm text-white mt-1">{athlete.kisceStatus}</p>
+          <p className="text-xs text-slate-500 font-medium">Assigned KISCE Facility:</p>
+          <p className="font-bold text-sm text-slate-900 mt-1">{athlete.kisceStatus}</p>
         </div>
 
         {/* National Ranking */}
-        <div className="bg-[#0d0d0d] border border-zinc-800 rounded-xl p-5">
-          <span className="text-zinc-400 text-xs uppercase font-semibold tracking-wider block mb-3">National Rank</span>
-          <div className="text-4xl font-bold text-amber-400 font-mono">
-            {athlete.rank} <span className="text-xs text-zinc-500 font-sans font-normal">/ National Pool</span>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <span className="text-slate-500 text-xs uppercase font-bold tracking-wider block mb-3">National Rank</span>
+          <div className="text-4xl font-extrabold text-amber-600 font-mono">
+            {athlete.rank} <span className="text-xs text-slate-500 font-sans font-normal">/ National Pool</span>
           </div>
-          <p className="text-xs text-zinc-400 mt-4">
-            Physical Profile: <strong className="text-white">{athlete.heightCm} cm</strong> | <strong className="text-white">{athlete.weightKg} kg</strong>
+          <p className="text-xs text-slate-600 mt-4 font-medium">
+            Physical Profile: <strong className="text-slate-900">{athlete.heightCm} cm</strong> | <strong className="text-slate-900">{athlete.weightKg} kg</strong>
           </p>
         </div>
 
-        {/* Prototype Scope Banner */}
-        <div className="bg-[#0d0d0d] border border-zinc-800 rounded-xl p-5 flex flex-col justify-between">
+        {/* Dynamic Target Sports Box */}
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <span className="text-zinc-400 text-xs uppercase font-semibold tracking-wider block mb-2">Prototype Target Sports</span>
+            <span className="text-slate-500 text-xs uppercase font-bold tracking-wider block mb-2">Prototype Target Sports</span>
             <div className="flex flex-wrap gap-2 mt-2">
-              {['High Jump', 'Long Jump', 'Basketball', 'Volleyball'].map((sp, idx) => (
-                <span key={idx} className="bg-zinc-800 border border-zinc-700/50 text-zinc-300 text-xs px-2.5 py-1 rounded-md">
-                  {sp}
-                </span>
-              ))}
+              {['High Jump', 'Long Jump', 'Basketball', 'Volleyball'].map((sp, idx) => {
+                const isSelected = athlete.sport.includes(sp);
+                return (
+                  <span 
+                    key={idx} 
+                    className={`text-xs px-2.5 py-1 rounded-md border font-semibold ${
+                      isSelected 
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-700 font-bold' 
+                        : 'bg-slate-100 border-slate-200 text-slate-500'
+                    }`}
+                  >
+                    {sp} {isSelected ? '✓' : ''}
+                  </span>
+                );
+              })}
             </div>
           </div>
-          <span className="text-[11px] text-zinc-500 mt-4 block">Evaluated using 5 core fitness test protocols.</span>
+          <span className="text-[11px] text-slate-500 font-medium mt-4 block">Evaluated using 5 core fitness test protocols.</span>
         </div>
 
-        {/* 5 Physical Fitness Test Benchmark Grid */}
-        <div className="bg-[#0d0d0d] border border-zinc-800 rounded-xl p-6 md:col-span-3">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-white">5 Core Physical Benchmarks</h3>
-            <button className="bg-white hover:bg-zinc-200 text-black px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">
-              + Upload Retest Score
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="bg-[#121214] p-4 rounded-xl border border-zinc-800">
-              <span className="text-zinc-400 text-xs block">Vertical Jump</span>
-              <p className="text-xl font-bold text-white font-mono mt-1">{athlete.metrics.verticalJump}</p>
-            </div>
-            <div className="bg-[#121214] p-4 rounded-xl border border-zinc-800">
-              <span className="text-zinc-400 text-xs block">Horizontal Jump</span>
-              <p className="text-xl font-bold text-white font-mono mt-1">{athlete.metrics.horizontalJump}</p>
-            </div>
-            <div className="bg-[#121214] p-4 rounded-xl border border-zinc-800">
-              <span className="text-zinc-400 text-xs block">Pushups</span>
-              <p className="text-xl font-bold text-white font-mono mt-1">{athlete.metrics.pushups}</p>
-            </div>
-            <div className="bg-[#121214] p-4 rounded-xl border border-zinc-800">
-              <span className="text-zinc-400 text-xs block">Squats</span>
-              <p className="text-xl font-bold text-white font-mono mt-1">{athlete.metrics.squats}</p>
-            </div>
-            <div className="bg-[#121214] p-4 rounded-xl border border-zinc-800">
-              <span className="text-zinc-400 text-xs block">Crunches</span>
-              <p className="text-xl font-bold text-white font-mono mt-1">{athlete.metrics.crunches}</p>
-            </div>
-          </div>
         </div>
-      </div>
+      </section>
+
+      {/* Coach recommendations */}
+      <section className="coach-section bg-white border border-slate-200 rounded-xl p-6 shadow-sm mt-6">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Coach Near Me</h2>
+            <p className="text-sm text-slate-500 mt-1">Coaches matched to your interest in {athlete.sport}.</p>
+          </div>
+          <span className="bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">Based on your profile</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {DUMMY_COACHES
+            .filter((coach) => coach.sports.some((sport) => sport.toLowerCase() === athlete.sport.toLowerCase()))
+            .concat(DUMMY_COACHES.filter((coach) => !coach.sports.some((sport) => sport.toLowerCase() === athlete.sport.toLowerCase())))
+            .filter((coach) => !searchQuery || `${coach.name} ${coach.sports.join(' ')} ${coach.location}`.toLowerCase().includes(searchQuery.toLowerCase()))
+            .slice(0, 3)
+            .map((coach) => (
+              <article key={coach.name} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900">{coach.name}</h3>
+                    <p className="text-xs text-blue-600 font-semibold mt-1">{coach.sports.join(' • ')}</p>
+                  </div>
+                  <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 grid place-items-center font-extrabold">{coach.name.split(' ').map((part) => part[0]).join('')}</span>
+                </div>
+                <p className="text-xs text-slate-600 mt-4">{coach.specialty}</p>
+                <p className="text-xs text-slate-500 mt-2">{coach.location} • {coach.experience}</p>
+                <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-slate-200">
+                  <span className="text-[11px] text-emerald-700 font-bold">{coach.availability}</span>
+                  <button type="button" className="text-xs text-blue-700 font-bold hover:underline">View profile</button>
+                </div>
+              </article>
+            ))}
+        </div>
+      </section>
+
+      <nav className="athlete-bottom-nav" aria-label="Athlete navigation">
+        <div className="dashboard-brand" aria-label="AthleteVision"><img src={athleteVisionLogo} alt="AthleteVision logo" /></div>
+        <button type="button" className="is-active"><Compass size={22} /><span>Discover</span></button>
+        <button type="button"><MessageSquare size={22} /><span>Messages</span></button>
+        <button type="button" onClick={() => navigate('/assessment')}><Radio size={22} /><span>Assessments</span></button>
+        <button type="button" onClick={() => navigate('/profile')}><UserRound size={22} /><span>Profile</span></button>
+      </nav>
     </div>
   );
 };
