@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase/config';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { ArrowDownUp, Dumbbell, MoveDown, PersonStanding, ChevronRight, Compass, MessageSquare, Radio, UserRound } from 'lucide-react';
+import { ArrowDownUp, Dumbbell, MoveDown, PersonStanding, ChevronRight, Compass, MessageSquare, Radio, Scale, UserRound } from 'lucide-react';
 import './assessment.css';
 
 const TEST_RULES = {
@@ -30,6 +30,11 @@ const Assessment = () => {
   const [selectedTest, setSelectedTest] = useState(null);
   const [showRetest, setShowRetest] = useState(false);
   const [metrics, setMetrics] = useState(DEFAULT_METRICS);
+
+  const handleNavClick = (tab) => {
+    localStorage.setItem('athleteActiveTab', tab);
+    navigate('/athlete-dashboard');
+  };
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -93,11 +98,17 @@ const Assessment = () => {
         </>
       )}
 
-      {selectedTest && <div className="assessment-overlay"><section className="assessment-modal"><div className="assessment-modal__head"><div><span className="assessment-eyebrow">Assessment instructions</span><h2>{selectedTest.name}</h2><p>Unit: {selectedTest.unit || 'score'}</p></div><button type="button" onClick={() => setSelectedTest(null)} aria-label="Close">×</button></div><div className="assessment-rules"><h3>Rules before you start</h3><ol>{(TEST_RULES[selectedTest.id] || ['Read the instructions carefully before starting.', 'Complete the test with safe and controlled movement.', 'Only valid attempts will be considered.']).map((rule) => <li key={rule}>{rule}</li>)}</ol></div><p className="assessment-footnote">Camera-based scoring will be connected to this step separately.</p><div className="assessment-modal__actions"><button type="button" className="assessment-secondary" onClick={() => setSelectedTest(null)}>Back</button><button type="button" className="assessment-primary" onClick={() => setSelectedTest(null)}>Start Test</button></div></section></div>}
+      {selectedTest && <div className="assessment-overlay"><section className="assessment-modal"><div className="assessment-modal__head"><div><span className="assessment-eyebrow">Assessment instructions</span><h2>{selectedTest.name}</h2><p>Unit: {selectedTest.unit || 'score'}</p></div><button type="button" onClick={() => setSelectedTest(null)} aria-label="Close">×</button></div><div className="assessment-rules"><h3>Rules before you start</h3><ol>{(TEST_RULES[selectedTest.id] || ['Read the instructions carefully before starting.', 'Complete the test with safe and controlled movement.', 'Only valid attempts will be considered.']).map((rule) => <li key={rule}>{rule}</li>)}</ol></div><p className="assessment-footnote">Your camera will be used for real-time pose detection and scoring.</p><div className="assessment-modal__actions"><button type="button" className="assessment-secondary" onClick={() => setSelectedTest(null)}>Back</button><button type="button" className="assessment-primary" onClick={() => { const typeMap = { 'vertical-jump': 'verticalJump', 'horizontal-jump': 'verticalJump', pushups: 'pushUp', squats: 'squat', 'controlled-crunch': 'controlledCrunch', 'wall-sit': 'wallSit', plank: 'plank' }; const exerciseType = typeMap[selectedTest.id] || 'pushUp'; setSelectedTest(null); navigate(`/live-test/${exerciseType}`); }}>Start Test</button></div></section></div>}
 
       {showRetest && <div className="assessment-overlay"><section className="assessment-modal"><div className="assessment-modal__head"><div><span className="assessment-eyebrow">Retest results</span><h2>Update previous scores</h2></div><button type="button" onClick={() => setShowRetest(false)} aria-label="Close">×</button></div><form className="assessment-form" onSubmit={saveRetest}>{Object.entries({ verticalJump: ['Vertical Jump', 'cm'], horizontalJump: ['Horizontal Jump', 'cm'], pushups: ['Push-ups', 'reps'], wallSit: ['Wall Sit', 'sec'] }).map(([key, [label, unit]]) => <label key={key}>{label} ({unit})<input type="number" value={metrics[key]} onChange={(event) => setMetrics({ ...metrics, [key]: Number(event.target.value) })} /></label>)}<div className="assessment-modal__actions"><button type="button" className="assessment-secondary" onClick={() => setShowRetest(false)}>Cancel</button><button type="submit" className="assessment-primary">Save scores</button></div></form></section></div>}
 
-      <nav className="assessment-nav" aria-label="Athlete navigation"><button type="button" onClick={() => navigate('/athlete-dashboard')}><Compass size={24} /><span>Discover</span></button><button type="button"><MessageSquare size={24} /><span>Messages</span></button><button type="button" className="is-active"><Radio size={24} /><span>Assessments</span></button><button type="button" onClick={() => navigate('/profile')}><UserRound size={24} /><span>Profile</span></button></nav>
+      <nav className="assessment-nav" aria-label="Athlete navigation">
+        <button type="button" onClick={() => handleNavClick('discover')}><Compass size={24} /><span>Discover</span></button>
+        <button type="button"><MessageSquare size={24} /><span>Messages</span></button>
+        <button type="button" className="is-active"><Radio size={24} /><span>Assessments</span></button>
+        <button type="button" onClick={() => handleNavClick('appeals')}><Scale size={24} /><span>Appeals</span></button>
+        <button type="button" onClick={() => navigate('/profile')}><UserRound size={24} /><span>Profile</span></button>
+      </nav>
     </main>
   );
 };

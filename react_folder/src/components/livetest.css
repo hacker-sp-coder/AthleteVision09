@@ -1,0 +1,284 @@
+/* ─── Live Test Screen ─────────────────────────────────────────────────── */
+
+.livetest-root {
+  position: fixed;
+  inset: 0;
+  background: #0a0a0f;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  z-index: 50;
+}
+
+/* ── Top Bar ──────────────────────────────────────────────────────────── */
+.livetest-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(20, 20, 40, 0.9));
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  z-index: 10;
+}
+
+.livetest-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  transition: background 0.2s;
+}
+.livetest-back-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.livetest-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+
+.livetest-loading-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.livetest-loading-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffaa00;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* ── Camera Container ─────────────────────────────────────────────────── */
+.livetest-camera-container {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #050508;
+}
+
+.livetest-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.livetest-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Body not visible overlay */
+.livetest-no-body-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 5;
+  animation: fadeIn 0.3s ease;
+}
+
+.livetest-no-body-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 28px;
+  border-radius: 16px;
+  background: rgba(255, 100, 100, 0.15);
+  border: 1px solid rgba(255, 100, 100, 0.25);
+  backdrop-filter: blur(12px);
+}
+.livetest-no-body-text .icon {
+  font-size: 32px;
+  opacity: 0.8;
+}
+.livetest-no-body-text .label {
+  color: #ff8888;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Placeholder while loading */
+.livetest-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: rgba(255, 255, 255, 0.4);
+}
+.livetest-placeholder .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(100, 120, 255, 0.6);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Status Panel ─────────────────────────────────────────────────────── */
+.livetest-status-panel {
+  padding: 16px 20px 20px;
+  background: linear-gradient(135deg, rgba(15, 15, 30, 0.97), rgba(20, 20, 40, 0.95));
+  backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 10;
+}
+
+.livetest-status-primary {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+.livetest-status-secondary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: center;
+  max-width: 480px;
+}
+
+/* Form status color coding */
+.livetest-status-secondary.form-valid { color: rgba(100, 255, 160, 0.7); }
+.livetest-status-secondary.form-invalid { color: rgba(255, 110, 110, 0.8); }
+.livetest-status-secondary.form-uncertain { color: rgba(255, 200, 80, 0.7); }
+
+.livetest-stop-btn {
+  margin-top: 4px;
+  padding: 10px 32px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ff4466, #cc2244);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: transform 0.15s, box-shadow 0.2s;
+  box-shadow: 0 4px 16px rgba(255, 68, 102, 0.25);
+}
+.livetest-stop-btn:hover {
+  transform: scale(1.03);
+  box-shadow: 0 6px 24px rgba(255, 68, 102, 0.35);
+}
+.livetest-stop-btn:active {
+  transform: scale(0.98);
+}
+
+/* ── Height Input Modal ───────────────────────────────────────────────── */
+.livetest-height-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+}
+.livetest-height-modal {
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 320px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.livetest-height-modal h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+}
+.livetest-height-modal label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+.livetest-height-modal input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.livetest-height-modal input:focus {
+  border-color: rgba(100, 120, 255, 0.5);
+}
+.livetest-height-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.livetest-height-modal-actions button {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.livetest-height-modal-actions button:hover { transform: scale(1.03); }
+.livetest-height-modal-actions .cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+}
+.livetest-height-modal-actions .confirm {
+  background: linear-gradient(135deg, #6478ff, #4455cc);
+  color: #fff;
+}

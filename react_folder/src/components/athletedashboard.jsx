@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase/config';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { AlertTriangle, Bell, Compass, Dumbbell, MessageSquare, Radio, Search, UserRound } from 'lucide-react';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { AlertTriangle, Bell, CalendarDays, Compass, Dumbbell, MessageSquare, Radio, Scale, Search, UserRound } from 'lucide-react';
 import athleteVisionLogo from '../assets/athletevision-logo.svg';
+import AthleteAppeals from './athleteappeals';
 import './athletedashboard.css';
 
 const DUMMY_COACHES = [
@@ -22,8 +23,12 @@ const DUMMY_CAMPS = [
 
 const AthleteDashboard = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [loading,       setLoading]       = useState(true);
+  const [searchQuery,   setSearchQuery]   = useState('');
+  const [activeTab,     setActiveTab]     = useState(() => localStorage.getItem('athleteActiveTab') || 'discover');
+  const [athleteUid,    setAthleteUid]    = useState(null);
+  // Live test deadlines from Firestore
+  const [liveDeadlines, setLiveDeadlines] = useState([]);
 
   // Dynamic state for logged in athlete
   const [athlete, setAthlete] = useState({
@@ -58,6 +63,7 @@ const AthleteDashboard = () => {
 
           if (userDocSnap.exists()) {
             const userData = userDocSnap.data();
+            setAthleteUid(user.uid);
             setAthlete(prev => ({
               ...prev,
               name: userData.name || user.displayName || "Athlete",
@@ -70,6 +76,7 @@ const AthleteDashboard = () => {
             }));
           } else {
             // Fallback for direct auth without firestore doc
+            setAthleteUid(user.uid);
             setAthlete(prev => ({
               ...prev,
               name: user.displayName || user.email.split('@')[0],
@@ -89,7 +96,42 @@ const AthleteDashboard = () => {
     return () => unsubscribe();
   }, [navigate]);
 
+  // Persist active tab so it survives navigation to /assessment, /profile etc.
+  useEffect(() => {
+    localStorage.setItem('athleteActiveTab', activeTab);
+  }, [activeTab]);
+
+  // Real-time subscription to published tests + deadlines
+  useEffect(() => {
+    const unsubDeadlines = onSnapshot(
+      doc(db, 'assessmentConfig', 'current'),
+      (snapshot) => {
+        const tests = snapshot.data()?.activeTests || [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Keep only tests that have a deadline set and deadline is today or future
+        const upcoming = tests
+          .filter((t) => t.deadline)
+          .map((t) => ({
+            ...t,
+            deadlineDate: new Date(t.deadline + 'T00:00:00'),
+          }))
+          .filter((t) => t.deadlineDate >= today)
+          .sort((a, b) => a.deadlineDate - b.deadlineDate);
+
+        setLiveDeadlines(upcoming);
+      },
+      (err) => {
+        console.error('Deadline subscription error:', err);
+      }
+    );
+
+    return () => unsubDeadlines();
+  }, []);
+
   const handleLogout = async () => {
+    localStorage.removeItem('athleteActiveTab');
     await signOut(auth);
     navigate('/login');
   };
@@ -105,6 +147,14 @@ const AthleteDashboard = () => {
 
   return (
     <div className="athlete-dashboard min-h-screen bg-slate-50 text-slate-900 p-6 font-sans">
+      {/* ── Appeals Tab view ── */}
+      {activeTab === 'appeals' && (
+        <AthleteAppeals athleteId={athleteUid} athleteName={athlete.name} />
+      )}
+
+      {/* ── Discover Tab view (existing content) ── */}
+      {activeTab === 'discover' && (
+      <>
       {/* Top Header */}
       <div className="athlete-dashboard__header flex justify-between items-center mb-8 border-b border-slate-200 pb-5">
         <div>
@@ -118,8 +168,41 @@ const AthleteDashboard = () => {
       </div>
 
       <section className="deadline-card">
-        <div className="deadline-card__heading"><AlertTriangle size={25} /><div><h2>Upcoming Test Deadlines</h2><p>Important tests due soon</p></div></div>
-        <div className="deadline-card__rows"><span>Push-ups</span><strong>Due tomorrow</strong><span>Wall Sit</span><span>Due Mon, Aug 24</span></div>
+        <div className="deadline-card__heading">
+          <AlertTriangle size={25} />
+          <div>
+            <h2>Upcoming Test Deadlines</h2>
+            <p>{liveDeadlines.length > 0 ? `${liveDeadlines.length} test${liveDeadlines.length > 1 ? 's' : ''} due soon` : 'No upcoming deadlines'}</p>
+          </div>
+        </div>
+        {liveDeadlines.length > 0 ? (
+          <div className="deadline-card__rows">
+            {liveDeadlines.map((test) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const diff = Math.round((test.deadlineDate - today) / (1000 * 60 * 60 * 24));
+              let dueLabel;
+              if (diff === 0) dueLabel = 'Due today';
+              else if (diff === 1) dueLabel = 'Due tomorrow';
+              else dueLabel = `Due ${test.deadlineDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`;
+              const isUrgent = diff <= 2;
+              return (
+                <React.Fragment key={test.id}>
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays size={14} className="opacity-60" />
+                    {test.name}
+                  </span>
+                  <strong style={{ color: isUrgent ? '#dc2626' : undefined }}>{dueLabel}</strong>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="deadline-card__empty">
+            <CalendarDays size={20} className="opacity-40" />
+            <span>No tests scheduled yet. Check back soon.</span>
+          </div>
+        )}
       </section>
 
       <label className="athlete-search">
@@ -232,11 +315,17 @@ const AthleteDashboard = () => {
         </div>
       </section>
 
+      </>
+      )}
+
       <nav className="athlete-bottom-nav" aria-label="Athlete navigation">
         <div className="dashboard-brand" aria-label="AthleteVision"><img src={athleteVisionLogo} alt="AthleteVision logo" /></div>
-        <button type="button" className="is-active"><Compass size={22} /><span>Discover</span></button>
+        <button type="button" className={activeTab === 'discover' ? 'is-active' : ''} onClick={() => setActiveTab('discover')}><Compass size={22} /><span>Discover</span></button>
         <button type="button"><MessageSquare size={22} /><span>Messages</span></button>
         <button type="button" onClick={() => navigate('/assessment')}><Radio size={22} /><span>Assessments</span></button>
+        <button type="button" className={activeTab === 'appeals' ? 'is-active' : ''} onClick={() => setActiveTab('appeals')}>
+          <Scale size={22} /><span>Appeals</span>
+        </button>
         <button type="button" onClick={() => navigate('/profile')}><UserRound size={22} /><span>Profile</span></button>
       </nav>
     </div>
