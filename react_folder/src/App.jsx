@@ -9,6 +9,7 @@ import ScoutDashboard from './components/scoutdashboard';
 import Assessment from './components/assessment';
 import Profile from './components/profile';
 import SportCv from './components/sportcv';
+import LiveTest from './components/livetest';
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
           <Route path="/admin-login" element={<AdminLogin />} />
           <Route path="/athlete-dashboard" element={<AthleteDashboard />} />
           <Route path="/assessment" element={<Assessment />} />
+          <Route path="/live-test/:exerciseType" element={<LiveTest />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/sport-cv" element={<SportCv />} />
           <Route path="/scout-dashboard" element={<ScoutDashboard />} />
