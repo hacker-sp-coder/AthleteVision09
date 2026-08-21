@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import gsap from 'gsap';
-import { Trophy, Activity, MapPin, ChevronRight, Zap, Check, Eye, EyeOff, CalendarDays, AlertCircle } from 'lucide-react';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { Trophy, Activity, MapPin, ChevronRight, Zap, Check, Eye, EyeOff, CalendarDays, AlertCircle, Scale } from 'lucide-react';
+import { doc, onSnapshot, setDoc, collection, query, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import ScoutAppeals from './scoutappeals';
 
 const ASSESSMENT_TESTS = [
   { id: 'vertical-jump', name: 'Vertical Jump', unit: 'cm', description: 'Lower-body explosiveness' },
@@ -100,6 +101,10 @@ const ScoutDashboard = () => {
   const [activeTests, setActiveTests] = useState([]);
   const [publishError, setPublishError] = useState('');
 
+  // Tab state: 'dashboard' | 'appeals'
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [pendingAppealsCount, setPendingAppealsCount] = useState(0);
+
   // Local state for deadline inputs: { [testId]: 'YYYY-MM-DD' }
   const [deadlineInputs, setDeadlineInputs] = useState({});
   const [deadlineSaving, setDeadlineSaving] = useState({});
@@ -140,6 +145,16 @@ const ScoutDashboard = () => {
     return () => unsubscribe();
   }, []);
 
+  // Real-time pending appeals count for badge
+  useEffect(() => {
+    const q = query(collection(db, 'appeals'), where('status', '==', 'under_review'));
+    const unsub = onSnapshot(q,
+      snap => setPendingAppealsCount(snap.size),
+      err  => console.error('Appeals count error:', err)
+    );
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     if (selectedAthlete && drawerRef.current) {
       gsap.fromTo(
@@ -160,6 +175,13 @@ const ScoutDashboard = () => {
     return matchesGender && matchesTrack;
   });
 
+  // Helper to generate unique session code for published tests
+  const generateSessionCode = (testId) => {
+    const prefix = testId.split('-').map((p) => p[0].toUpperCase()).join('');
+    const randNum = Math.floor(1000 + Math.random() * 9000);
+    return `AV-${prefix}-${randNum}`;
+  };
+
   // Toggle publish/unpublish a test
   const toggleTestPublication = async (testDef) => {
     setPublishError('');
@@ -169,7 +191,9 @@ const ScoutDashboard = () => {
     if (isPublished) {
       nextTests = activeTests.filter((t) => t.id !== testDef.id);
     } else {
-      nextTests = [...activeTests, { ...testDef }];
+      const existing = activeTests.find((t) => t.id === testDef.id);
+      const sessionCode = existing?.sessionCode || generateSessionCode(testDef.id);
+      nextTests = [...activeTests, { ...testDef, sessionCode }];
     }
 
     try {
@@ -254,11 +278,48 @@ const ScoutDashboard = () => {
         </div>
       </header>
 
-      {publishError && (
-        <div className="dashboard-card bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-xs font-semibold">
-          {publishError}
-        </div>
-      )}
+      {/* ── Tab Switcher ── */}
+      <div className="flex items-center gap-1 mb-6 bg-slate-100 p-1 rounded-xl w-fit dashboard-card">
+        <button
+          type="button"
+          onClick={() => setActiveTab('dashboard')}
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            activeTab === 'dashboard'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Dashboard
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('appeals')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            activeTab === 'appeals'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Scale className="w-4 h-4" />
+          Appeals
+          {pendingAppealsCount > 0 && (
+            <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-500 text-white text-[10px] font-extrabold rounded-full">
+              {pendingAppealsCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ── Appeals tab content ── */}
+      {activeTab === 'appeals' && <ScoutAppeals />}
+
+      {/* ── Dashboard tab content ── */}
+      {activeTab === 'dashboard' && <>
+        {publishError && (
+          <div className="dashboard-card bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-xs font-semibold">
+            {publishError}
+          </div>
+        )}
 
       {/* All-tests-published banner */}
       {allPublished && (
@@ -320,7 +381,12 @@ const ScoutDashboard = () => {
                     {isPublished ? <Eye className="w-4 h-4 text-blue-600" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
                   </div>
                   <span className="text-[11px] text-slate-500 block mt-1">{test.description} • {test.unit}</span>
-                  <span className={`inline-flex items-center gap-1 text-[11px] font-bold mt-3 ${isPublished ? 'text-blue-700' : 'text-slate-500'}`}>
+                  {isPublished && activeTest?.sessionCode && (
+                    <span className="inline-block mt-2 font-mono text-[10px] font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                      Session Code: {activeTest.sessionCode}
+                    </span>
+                  )}
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-bold mt-3 block ${isPublished ? 'text-blue-700' : 'text-slate-500'}`}>
                     {isPublished && <Check className="w-3.5 h-3.5" />}
                     {isPublished ? 'Published — click to unpublish' : 'Click to publish'}
                   </span>
@@ -527,6 +593,7 @@ const ScoutDashboard = () => {
           </div>
         </div>
       )}
+      </>}
     </div>
   );
 };

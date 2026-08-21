@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { ArrowLeft, Bell, ChevronRight, Compass, FileText, HelpCircle, LogOut, Mail, MapPin, MessageSquare, Radio, Shield, Sun, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, Bell, ChevronRight, Compass, FileText, HelpCircle, LogOut, Mail, MapPin, MessageSquare, Radio, Scale, Shield, Sun, UserRound, UsersRound } from 'lucide-react';
 import { auth, db } from '../firebase/config';
 import './profile.css';
 
@@ -44,17 +44,22 @@ const Profile = () => {
     navigate('/login');
   };
 
+  const handleNavClick = (tab) => {
+    localStorage.setItem('athleteActiveTab', tab);
+    navigate('/athlete-dashboard');
+  };
+
   if (loading) return <div className="profile-loading">Loading profile...</div>;
 
   return (
     <main className="profile-page">
       <header className="profile-header">
-        <button type="button" className="profile-back" onClick={() => navigate('/athlete-dashboard')} aria-label="Back to dashboard"><ArrowLeft size={30} /></button>
+        <button type="button" className="profile-back" onClick={() => handleNavClick('discover')} aria-label="Back to dashboard"><ArrowLeft size={30} /></button>
         <h1>Settings</h1>
         <span className="profile-header__spacer" />
       </header>
 
-      <button type="button" className="profile-identity" onClick={() => navigate('/athlete-dashboard')}>
+      <button type="button" className="profile-identity" onClick={() => handleNavClick('discover')}>
         <span className="profile-avatar">{profile.name.charAt(0).toUpperCase()}</span>
         <span><strong>{profile.name}</strong><small>View and edit profile</small></span>
         <ChevronRight className="profile-chevron" size={28} />
@@ -82,12 +87,12 @@ const Profile = () => {
       </ProfileSection>
 
       <button type="button" className="profile-logout" onClick={handleLogout}><LogOut size={25} />Log Out</button>
-    
 
       <nav className="profile-nav" aria-label="Athlete navigation">
-        <button type="button" onClick={() => navigate('/athlete-dashboard')}><Compass size={24} /><small>Discover</small></button>
+        <button type="button" onClick={() => handleNavClick('discover')}><Compass size={24} /><small>Discover</small></button>
         <button type="button"><MessageSquare size={24} /><small>Messages</small></button>
         <button type="button" onClick={() => navigate('/assessment')}><Radio size={24} /><small>Assessments</small></button>
+        <button type="button" onClick={() => handleNavClick('appeals')}><Scale size={24} /><small>Appeals</small></button>
         <button type="button" className="is-active"><UserRound size={24} /><small>Profile</small></button>
       </nav>
     </main>
